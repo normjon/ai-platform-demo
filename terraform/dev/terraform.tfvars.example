@@ -18,4 +18,4 @@ model_arn_embeddings = "amazon.titan-embed-text-v2:0"
 agent_image_uri = "<account-id>.dkr.ecr.us-east-2.amazonaws.com/ai-platform-hr-assistant:<git-sha>"
 
 # Glean MCP tool endpoint registered in the AgentCore Gateway.
-glean_mcp_endpoint = "https://<your-glean-tenant>.glean.com/mcp"
+glean_mcp_endpoint = "https://placeholder.glean.com/mcp"
