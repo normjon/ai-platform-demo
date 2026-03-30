@@ -1,4 +1,22 @@
 # ---------------------------------------------------------------------------
+# ECR Repository - stores the agent container image.
+# Created here so the repository exists before the runtime references it.
+# Image push is a CI/CD concern and is not managed by Terraform.
+# ADR-009: image tags must be git SHAs - enforced by IMMUTABLE tag mutability.
+# ---------------------------------------------------------------------------
+
+resource "aws_ecr_repository" "agent" {
+  name                 = "${var.name_prefix}-hr-assistant"
+  image_tag_mutability = "IMMUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = var.tags
+}
+
+# ---------------------------------------------------------------------------
 # AgentCore Runtime - single dev endpoint, VPC-private, Graviton (arm64).
 #
 # Resource type: aws_bedrockagentcore_agent_runtime (requires hashicorp/aws ~> 6.0)

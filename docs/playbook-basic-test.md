@@ -232,3 +232,81 @@ runtime are functioning as designed.
 cannot be tested until a real Glean MCP endpoint is configured in
 `terraform.tfvars`. See `terraform/modules/iam/README.md` Known Issues for
 the gateway target deployment procedure.
+
+---
+
+## Teardown Notes
+
+Run from `terraform/dev/`:
+
+```bash
+terraform destroy -auto-approve
+```
+
+### Known Issues During Destroy
+
+**VPC interface endpoint ENI cleanup takes 15-25 minutes**
+
+The two interface endpoints (`bedrock-runtime`, `cloudwatch-logs`) leave
+behind Elastic Network Interfaces in the subnets when deleted. Terraform
+will poll for up to ~20 minutes waiting for them to clear. The subnets and
+security group cannot be deleted until the ENIs are released by AWS. This
+is normal — wait for the poll to complete or retry `terraform destroy` if
+it times out.
+
+**AgentCore VPC-mode ENIs block subnet deletion**
+
+When the AgentCore runtime uses `network_mode = "VPC"`, AWS creates
+`agentic_ai` type ENIs in the subnets. These are `InstanceOwnerId:
+amazon-aws` and cannot be manually detached (`OperationNotPermitted` on
+`ela-attach` attachments). After `terraform destroy` removes the runtime
+resource, AWS releases these ENIs asynchronously. If subnet deletion fails
+with `DependencyViolation`, wait 15-30 minutes and re-run
+`terraform destroy -auto-approve` — Terraform will resume from the
+remaining 3 resources and complete in seconds.
+
+**Gateway target must be deleted before gateway**
+
+If a gateway target exists outside Terraform state (e.g. from a failed
+apply), `terraform destroy` will fail to delete the gateway with:
+"Gateway has targets associated with it." Fix:
+
+```bash
+# List targets
+aws bedrock-agentcore-control list-gateway-targets \
+  --gateway-identifier <gateway-id> --region us-east-2
+
+# Delete each orphaned target
+aws bedrock-agentcore-control delete-gateway-target \
+  --gateway-identifier <gateway-id> \
+  --target-id <target-id> \
+  --region us-east-2
+
+# Then re-run
+terraform destroy -auto-approve
+```
+
+**S3 versioned buckets not empty**
+
+With versioning enabled, deleted objects leave delete markers. Terraform
+will fail to delete the bucket with `BucketNotEmpty`. Purge all versions
+and markers first:
+
+```bash
+BUCKET="ai-platform-dev-document-landing-096305373014"
+
+# Delete all versions
+aws s3api list-object-versions --bucket $BUCKET --region us-east-2 \
+  --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json \
+  | jq '{Objects: ., Quiet: true}' \
+  | xargs -I{} aws s3api delete-objects --bucket $BUCKET --region us-east-2 --delete '{}'
+
+# Delete all delete markers  
+aws s3api list-object-versions --bucket $BUCKET --region us-east-2 \
+  --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json \
+  | jq '{Objects: ., Quiet: true}' \
+  | xargs -I{} aws s3api delete-objects --bucket $BUCKET --region us-east-2 --delete '{}'
+```
+
+Repeat for `ai-platform-dev-prompt-vault-096305373014`, then re-run
+`terraform destroy -auto-approve`.

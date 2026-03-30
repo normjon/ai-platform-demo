@@ -8,6 +8,11 @@ output "subnet_ids" {
   value       = module.networking.subnet_ids
 }
 
+output "ecr_repository_url" {
+  description = "ECR repository URL for the HR Assistant agent. Push images here before invoking the runtime."
+  value       = module.agentcore.ecr_repository_url
+}
+
 output "agentcore_endpoint_id" {
   description = "AgentCore runtime endpoint ID."
   value       = module.agentcore.endpoint_id

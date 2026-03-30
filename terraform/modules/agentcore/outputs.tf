@@ -1,3 +1,8 @@
+output "ecr_repository_url" {
+  description = "ECR repository URL for the HR Assistant agent image."
+  value       = aws_ecr_repository.agent.repository_url
+}
+
 output "endpoint_id" {
   description = "AgentCore runtime endpoint ID."
   value       = aws_bedrockagentcore_agent_runtime.dev.agent_runtime_id

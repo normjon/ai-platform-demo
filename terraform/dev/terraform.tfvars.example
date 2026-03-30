@@ -13,8 +13,12 @@ private_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
 model_arn_primary    = "anthropic.claude-sonnet-4-6"
 model_arn_evaluation = "anthropic.claude-haiku-4-5-20251001"
 
-# ECR image URI for the HR Assistant agent. Tag must be a git SHA — never 'latest'.
-agent_image_uri = "<account-id>.dkr.ecr.us-east-2.amazonaws.com/ai-platform-hr-assistant:<git-sha>"
+# ECR image URI for the HR Assistant agent. Tag must be a git SHA - never 'latest' (ADR-009).
+# The ECR repository is created by terraform apply. Get the URL from:
+#   terraform output ecr_repository_url
+# Push a valid arm64 image to the repo before running terraform apply a second time
+# (the AgentCore runtime validates the URI and image existence at create time).
+agent_image_uri = "096305373014.dkr.ecr.us-east-2.amazonaws.com/ai-platform-dev-hr-assistant:<git-sha>"
 
 # Glean MCP tool endpoint registered in the AgentCore Gateway.
 glean_mcp_endpoint = "https://placeholder.glean.com/mcp"
