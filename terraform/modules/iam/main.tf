@@ -111,12 +111,6 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
         Resource = local.model_arns
       },
       {
-        Sid    = "BedrockKnowledgeBaseRetrieve"
-        Effect = "Allow"
-        Action = ["bedrock:Retrieve", "bedrock:RetrieveAndGenerate"]
-        Resource = [var.kb_arn]
-      },
-      {
         Sid    = "CloudWatchLogsWrite"
         Effect = "Allow"
         Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
@@ -170,12 +164,6 @@ resource "aws_iam_role_policy" "bedrock_kb" {
           "${var.document_bucket_arn}/*",
         ]
       },
-      {
-        Sid      = "OpenSearchServerlessWrite"
-        Effect   = "Allow"
-        Action   = ["aoss:APIAccessAll"]
-        Resource = [var.opensearch_collection_arn]
-      }
     ]
   })
 }
@@ -265,52 +253,3 @@ resource "aws_iam_role_policy" "lambda_execution" {
   })
 }
 
-# ---------------------------------------------------------------------------
-# Role 4 — OpenSearch Serverless Access Role
-#
-# Assumed by services that need direct read/write access to the OpenSearch
-# Serverless vector index beyond what the KB ingestion role covers.
-# Dual trust: bedrock.amazonaws.com and bedrock-agentcore.amazonaws.com.
-# ---------------------------------------------------------------------------
-
-resource "aws_iam_role" "opensearch_access" {
-  name        = "${var.project_name}-opensearch-${var.environment}"
-  description = "OpenSearch Serverless direct-access role — vector index read/write for Bedrock and AgentCore."
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid    = "AllowBedrockAndAgentCoreAssumeRole"
-      Effect = "Allow"
-      Principal = {
-        Service = [
-          "bedrock.amazonaws.com",
-          "bedrock-agentcore.amazonaws.com",
-        ]
-      }
-      Action = "sts:AssumeRole"
-      Condition = {
-        StringEquals = { "aws:SourceAccount" = var.aws_account_id }
-      }
-    }]
-  })
-
-  tags = merge(local.module_tags, { Name = "${var.project_name}-opensearch-${var.environment}" })
-}
-
-resource "aws_iam_role_policy" "opensearch_access" {
-  name = "${var.project_name}-opensearch-${var.environment}-policy"
-  role = aws_iam_role.opensearch_access.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Sid      = "OpenSearchServerlessAccess"
-        Effect   = "Allow"
-        Action   = ["aoss:APIAccessAll"]
-        Resource = [var.opensearch_collection_arn]
-      }
-    ]
-  })
-}

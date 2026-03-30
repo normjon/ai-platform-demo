@@ -18,11 +18,6 @@ variable "aws_account_id" {
   type        = string
 }
 
-variable "kb_arn" {
-  description = "Bedrock Knowledge Base ARN. Granted to the AgentCore runtime role for Retrieve and RetrieveAndGenerate."
-  type        = string
-}
-
 variable "document_bucket_arn" {
   description = "ARN of the S3 document landing bucket. Granted to the Bedrock KB role for source document reads and the Lambda role for document access."
   type        = string
@@ -30,11 +25,6 @@ variable "document_bucket_arn" {
 
 variable "prompt_vault_bucket_arn" {
   description = "ARN of the S3 Prompt Vault bucket. Granted to the Lambda role for prompt template reads and writes."
-  type        = string
-}
-
-variable "opensearch_collection_arn" {
-  description = "ARN of the OpenSearch Serverless collection. Granted to the Bedrock KB role and the OpenSearch access role."
   type        = string
 }
 

@@ -37,7 +37,6 @@ resource "aws_bedrockagentcore_agent_runtime" "dev" {
     AGENT_ENV = "dev"
     # Model ARN surfaced as env var so agent code references it without hardcoding (ADR-009).
     BEDROCK_MODEL_ID     = var.model_arn_primary
-    KNOWLEDGE_BASE_ID    = var.knowledge_base_id
     SESSION_MEMORY_TABLE = var.session_memory_table
     AGENT_REGISTRY_TABLE = var.agent_registry_table
     LOG_LEVEL            = "INFO"

@@ -54,21 +54,6 @@ variable "agentcore_role_arn" {
   type        = string
 }
 
-variable "knowledge_base_id" {
-  description = "Bedrock Knowledge Base ID passed to the runtime as an environment variable."
-  type        = string
-}
-
-variable "guardrail_id" {
-  description = "Bedrock Guardrail ID applied to all agent invocations."
-  type        = string
-}
-
-variable "guardrail_arn" {
-  description = "Bedrock Guardrail ARN applied to all agent invocations."
-  type        = string
-}
-
 variable "log_group_agentcore" {
   description = "CloudWatch log group name for AgentCore invocation logs."
   type        = string

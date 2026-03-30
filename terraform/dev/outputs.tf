@@ -13,16 +13,6 @@ output "agentcore_endpoint_id" {
   value       = module.agentcore.endpoint_id
 }
 
-output "knowledge_base_id" {
-  description = "Bedrock Knowledge Base ID for the Platform Documentation KB."
-  value       = module.bedrock.knowledge_base_id
-}
-
-output "opensearch_collection_endpoint" {
-  description = "OpenSearch Serverless collection endpoint used by the Knowledge Base."
-  value       = module.bedrock.opensearch_collection_endpoint
-}
-
 output "document_landing_bucket" {
   description = "S3 bucket name for Knowledge Base document ingestion."
   value       = module.storage.document_landing_bucket

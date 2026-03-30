@@ -55,12 +55,6 @@ variable "model_arn_evaluation" {
   default     = "anthropic.claude-haiku-4-5-20251001"
 }
 
-variable "model_arn_embeddings" {
-  description = "Embedding model ARN. Used by the Bedrock Knowledge Base for vector indexing."
-  type        = string
-  default     = "amazon.titan-embed-text-v2:0"
-}
-
 variable "agent_image_uri" {
   description = "ECR image URI for the HR Assistant agent container. Tag must be a git SHA (ADR-009)."
   type        = string

@@ -33,16 +33,6 @@ output "lambda_execution_role_name" {
   value       = aws_iam_role.lambda_execution.name
 }
 
-output "opensearch_access_role_arn" {
-  description = "ARN of the OpenSearch Serverless direct-access IAM role."
-  value       = aws_iam_role.opensearch_access.arn
-}
-
-output "opensearch_access_role_name" {
-  description = "Name of the OpenSearch Serverless direct-access IAM role."
-  value       = aws_iam_role.opensearch_access.name
-}
-
 # Kept for consumption by storage/, observability/, and bedrock/ modules.
 output "storage_kms_key_arn" {
   description = "ARN of the KMS key used to encrypt S3, DynamoDB, and CloudWatch log groups."

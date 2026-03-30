@@ -94,12 +94,3 @@ resource "aws_vpc_endpoint" "cloudwatch_logs" {
   tags                = merge(var.tags, { Name = "${var.name_prefix}-logs-endpoint" })
 }
 
-resource "aws_vpc_endpoint" "aoss" {
-  vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.region}.aoss"
-  vpc_endpoint_type   = "Interface"
-  subnet_ids          = aws_subnet.private[*].id
-  security_group_ids  = [aws_security_group.agentcore.id]
-  private_dns_enabled = true
-  tags                = merge(var.tags, { Name = "${var.name_prefix}-aoss-endpoint" })
-}

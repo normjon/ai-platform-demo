@@ -57,12 +57,6 @@ module "iam" {
   registry_table_arn      = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}"
   agentcore_log_group_arn = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
 
-  # Placeholder ARNs — these reference resources in bedrock/ which depends on iam/,
-  # so they cannot be wired as module outputs (circular dependency). Update these
-  # values once the Knowledge Base and OpenSearch collection IDs are known post-apply.
-  kb_arn                    = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:knowledge-base/PLACEHOLDER"
-  opensearch_collection_arn = "arn:aws:aoss:${var.aws_region}:${var.account_id}:collection/PLACEHOLDER"
-
   tags = local.common_tags
 }
 
@@ -83,20 +77,6 @@ module "observability" {
   tags        = local.common_tags
 }
 
-module "bedrock" {
-  source = "../modules/bedrock"
-
-  name_prefix             = local.name_prefix
-  aws_region              = var.aws_region
-  account_id              = var.account_id
-  model_arn_primary       = var.model_arn_primary
-  model_arn_embeddings    = var.model_arn_embeddings
-  document_landing_bucket = module.storage.document_landing_bucket
-  kb_role_arn             = module.iam.bedrock_kb_role_arn
-  kms_key_arn             = module.iam.storage_kms_key_arn
-  tags                    = local.common_tags
-}
-
 module "agentcore" {
   source = "../modules/agentcore"
 
@@ -111,9 +91,6 @@ module "agentcore" {
   session_memory_table = module.storage.session_memory_table
   agent_registry_table = module.storage.agent_registry_table
   agentcore_role_arn   = module.iam.agentcore_runtime_role_arn
-  knowledge_base_id    = module.bedrock.knowledge_base_id
-  guardrail_id         = module.bedrock.guardrail_id
-  guardrail_arn        = module.bedrock.guardrail_arn
   log_group_agentcore  = module.observability.log_group_agentcore
   tags                 = local.common_tags
 }
