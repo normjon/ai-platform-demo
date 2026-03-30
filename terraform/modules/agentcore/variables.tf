@@ -19,7 +19,7 @@ variable "model_arn_primary" {
 }
 
 variable "agent_image_uri" {
-  description = "ECR image URI for the agent container. Tag must be a git SHA — never 'latest' (ADR-009)."
+  description = "ECR image URI for the agent container. Tag must be a git SHA - never 'latest' (ADR-009)."
   type        = string
 }
 
@@ -50,7 +50,7 @@ variable "agent_registry_table" {
 }
 
 variable "agentcore_role_arn" {
-  description = "IAM role ARN assumed by the AgentCore runtime (IRSA — ADR-001)."
+  description = "IAM role ARN assumed by the AgentCore runtime (IRSA - ADR-001)."
   type        = string
 }
 

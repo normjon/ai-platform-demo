@@ -31,12 +31,12 @@ resource "aws_route_table_association" "private" {
 }
 
 # ---------------------------------------------------------------------------
-# Security group for AgentCore runtime — no public ingress.
+# Security group for AgentCore runtime - no public ingress.
 # Egress scoped to VPC CIDR: all traffic flows through VPC endpoints.
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "agentcore" {
   name        = "${var.name_prefix}-agentcore-sg"
-  description = "AgentCore runtime — internal traffic only. Egress via VPC endpoints."
+  description = "AgentCore runtime - internal traffic only. Egress via VPC endpoints."
   vpc_id      = aws_vpc.this.id
   tags        = merge(var.tags, { Name = "${var.name_prefix}-agentcore-sg" })
 }
@@ -46,14 +46,14 @@ resource "aws_security_group_rule" "agentcore_egress_https" {
   from_port         = 443
   to_port           = 443
   protocol          = "tcp"
-  # Scoped to VPC CIDR — traffic reaches AWS services via VPC endpoints, not internet.
+  # Scoped to VPC CIDR - traffic reaches AWS services via VPC endpoints, not internet.
   cidr_blocks       = [var.vpc_cidr]
   security_group_id = aws_security_group.agentcore.id
   description       = "HTTPS egress to VPC CIDR for VPC endpoint traffic."
 }
 
 # ---------------------------------------------------------------------------
-# VPC Endpoints — all required AWS services for private subnet operation.
+# VPC Endpoints - all required AWS services for private subnet operation.
 # Gateway endpoints (S3, DynamoDB): free, route-table based.
 # Interface endpoints (Bedrock, CloudWatch Logs, OpenSearch): ENI-based.
 # ---------------------------------------------------------------------------

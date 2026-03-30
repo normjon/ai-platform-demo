@@ -1,19 +1,19 @@
 # ---------------------------------------------------------------------------
-# AgentCore Runtime — single dev endpoint, VPC-private, Graviton (arm64).
+# AgentCore Runtime - single dev endpoint, VPC-private, Graviton (arm64).
 #
 # Resource type: aws_bedrockagentcore_agent_runtime (requires hashicorp/aws ~> 6.0)
 # Reference baseline: https://github.com/awslabs/amazon-bedrock-agentcore-samples
 #   /tree/main/04-infrastructure-as-code/terraform/basic-runtime
 #
-# ADR-001: role_arn uses IRSA — no env-var credentials.
+# ADR-001: role_arn uses IRSA - no env-var credentials.
 # ADR-004: container image must be built for arm64/Graviton (CLAUDE.md).
 #          Architecture is enforced at image build time (uv + aarch64 target),
 #          not as a provider attribute on this resource.
-# ADR-009: agent_image_uri tag must be a git SHA — never 'latest'.
+# ADR-009: agent_image_uri tag must be a git SHA - never 'latest'.
 # ---------------------------------------------------------------------------
 
 resource "aws_bedrockagentcore_agent_runtime" "dev" {
-  # Underscores required — the provider rejects hyphens in agent_runtime_name.
+  # Underscores required - the provider rejects hyphens in agent_runtime_name.
   agent_runtime_name = replace("${var.name_prefix}-runtime", "-", "_")
   description        = "Dev AgentCore runtime for the HR Assistant test agent."
   role_arn           = var.agentcore_role_arn
@@ -24,7 +24,7 @@ resource "aws_bedrockagentcore_agent_runtime" "dev" {
     }
   }
 
-  # VPC mode keeps the runtime private — no public internet exposure (CLAUDE.md security rules).
+  # VPC mode keeps the runtime private - no public internet exposure (CLAUDE.md security rules).
   network_configuration {
     network_mode = "VPC"
     network_mode_config {
@@ -48,7 +48,7 @@ resource "aws_bedrockagentcore_agent_runtime" "dev" {
 }
 
 # ---------------------------------------------------------------------------
-# MCP Gateway — registers the Glean Search MCP tool.
+# MCP Gateway - registers the Glean Search MCP tool.
 #
 # authorizer_type = "AWS_IAM": access is controlled by IAM policies on the
 # calling principal. No Cognito user pool is required in the dev environment.
@@ -67,7 +67,7 @@ resource "aws_bedrockagentcore_gateway" "mcp" {
 
 resource "aws_bedrockagentcore_gateway_target" "glean_search" {
   name               = "glean-search"
-  description        = "Glean Enterprise Search MCP tool — permissions-aware retrieval across all indexed systems."
+  description        = "Glean Enterprise Search MCP tool - permissions-aware retrieval across all indexed systems."
   gateway_identifier = aws_bedrockagentcore_gateway.mcp.gateway_id
 
   target_configuration {

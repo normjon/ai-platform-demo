@@ -19,7 +19,7 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# KMS key — encrypts S3 buckets, DynamoDB tables, and CloudWatch log groups.
+# KMS key - encrypts S3 buckets, DynamoDB tables, and CloudWatch log groups.
 # Created here so its ARN can be passed to storage/, observability/, bedrock/
 # without circular dependencies.
 # ---------------------------------------------------------------------------
@@ -68,7 +68,7 @@ resource "aws_kms_key_policy" "storage" {
 }
 
 # ---------------------------------------------------------------------------
-# Role 1 — AgentCore Runtime Role
+# Role 1 - AgentCore Runtime Role
 #
 # Assumed by the AgentCore runtime to invoke Bedrock models and read from
 # the Knowledge Base. Trust principal: bedrock-agentcore.amazonaws.com.
@@ -78,7 +78,7 @@ resource "aws_kms_key_policy" "storage" {
 
 resource "aws_iam_role" "agentcore_runtime" {
   name        = "${var.project_name}-agentcore-runtime-${var.environment}"
-  description = "AgentCore runtime role — Bedrock model invocation and Knowledge Base retrieval."
+  description = "AgentCore runtime role - Bedrock model invocation and Knowledge Base retrieval."
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -121,7 +121,7 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
 }
 
 # ---------------------------------------------------------------------------
-# Role 2 — Bedrock Knowledge Base Role
+# Role 2 - Bedrock Knowledge Base Role
 #
 # Assumed by the Bedrock Knowledge Base service to read source documents
 # from S3 and write vectors to OpenSearch Serverless.
@@ -130,7 +130,7 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
 
 resource "aws_iam_role" "bedrock_kb" {
   name        = "${var.project_name}-bedrock-kb-${var.environment}"
-  description = "Bedrock Knowledge Base role — S3 document reads and OpenSearch vector writes."
+  description = "Bedrock Knowledge Base role - S3 document reads and OpenSearch vector writes."
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -169,9 +169,9 @@ resource "aws_iam_role_policy" "bedrock_kb" {
 }
 
 # ---------------------------------------------------------------------------
-# Role 3 — Lambda Execution Role
+# Role 3 - Lambda Execution Role
 #
-# Assumed by all Lambda functions in the platform — ingestion orchestrator,
+# Assumed by all Lambda functions in the platform - ingestion orchestrator,
 # quality scorer, and event handlers. Trust principal: lambda.amazonaws.com.
 # Haiku only: Lambda evaluation tasks never use Sonnet (cost control and
 # least-privilege per Section 8).
@@ -179,7 +179,7 @@ resource "aws_iam_role_policy" "bedrock_kb" {
 
 resource "aws_iam_role" "lambda_execution" {
   name        = "${var.project_name}-lambda-${var.environment}"
-  description = "Lambda execution role — evaluation, ingestion orchestration, and event handling."
+  description = "Lambda execution role - evaluation, ingestion orchestration, and event handling."
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -205,7 +205,7 @@ resource "aws_iam_role_policy" "lambda_execution" {
         Sid    = "BedrockHaikuOnly"
         Effect = "Allow"
         Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-        # Lambda evaluation tasks use Haiku only — never Sonnet (cost control).
+        # Lambda evaluation tasks use Haiku only - never Sonnet (cost control).
         Resource = [local.haiku_model_arn]
       },
       {
@@ -246,7 +246,7 @@ resource "aws_iam_role_policy" "lambda_execution" {
         Sid    = "SQSAccountScoped"
         Effect = "Allow"
         Action = ["sqs:SendMessage", "sqs:ReceiveMessage", "sqs:DeleteMessage"]
-        # Scoped to all queues within this account and region — no cross-account access.
+        # Scoped to all queues within this account and region - no cross-account access.
         Resource = ["arn:aws:sqs:${var.aws_region}:${var.aws_account_id}:*"]
       }
     ]

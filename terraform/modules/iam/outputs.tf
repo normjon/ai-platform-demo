@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# Role ARNs and names — consumed by agentcore/, bedrock/, storage/,
+# Role ARNs and names - consumed by agentcore/, bedrock/, storage/,
 # observability/ modules. Never hardcode these ARNs in other modules.
 # ---------------------------------------------------------------------------
 
