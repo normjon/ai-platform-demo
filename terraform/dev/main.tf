@@ -4,7 +4,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -24,10 +24,11 @@ locals {
 
   # ---------------------------------------------------------------------------
   # Resource identifiers — single source of truth for cross-module ARN refs.
-  # Matches the naming conventions in modules/storage/main.tf.
+  # Matches naming conventions in modules/storage/main.tf.
   # Passed to iam/ so it never reconstructs storage names internally (Step 3).
   # ---------------------------------------------------------------------------
   document_landing_bucket_name = "${local.name_prefix}-document-landing-${var.account_id}"
+  prompt_vault_bucket_name     = "${local.name_prefix}-prompt-vault-${var.account_id}"
   session_memory_table_name    = "${local.name_prefix}-session-memory"
   agent_registry_table_name    = "${local.name_prefix}-agent-registry"
 }
@@ -44,13 +45,25 @@ module "networking" {
 module "iam" {
   source = "../modules/iam"
 
-  name_prefix                 = local.name_prefix
-  aws_region                  = var.aws_region
-  account_id                  = var.account_id
-  document_landing_bucket_arn = "arn:aws:s3:::${local.document_landing_bucket_name}"
-  session_memory_table_arn    = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.session_memory_table_name}"
-  agent_registry_table_arn    = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}"
-  tags                        = local.common_tags
+  project_name   = var.project_name
+  environment    = var.environment
+  aws_region     = var.aws_region
+  aws_account_id = var.account_id
+
+  # Resource ARNs computed from locals — iam/ never reconstructs storage naming (Step 3).
+  document_bucket_arn     = "arn:aws:s3:::${local.document_landing_bucket_name}"
+  prompt_vault_bucket_arn = "arn:aws:s3:::${local.prompt_vault_bucket_name}"
+  session_table_arn       = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.session_memory_table_name}"
+  registry_table_arn      = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}"
+  agentcore_log_group_arn = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
+
+  # Placeholder ARNs — these reference resources in bedrock/ which depends on iam/,
+  # so they cannot be wired as module outputs (circular dependency). Update these
+  # values once the Knowledge Base and OpenSearch collection IDs are known post-apply.
+  kb_arn                    = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:knowledge-base/PLACEHOLDER"
+  opensearch_collection_arn = "arn:aws:aoss:${var.aws_region}:${var.account_id}:collection/PLACEHOLDER"
+
+  tags = local.common_tags
 }
 
 module "storage" {
@@ -97,7 +110,7 @@ module "agentcore" {
   agentcore_sg_id      = module.networking.agentcore_sg_id
   session_memory_table = module.storage.session_memory_table
   agent_registry_table = module.storage.agent_registry_table
-  agentcore_role_arn   = module.iam.agentcore_role_arn
+  agentcore_role_arn   = module.iam.agentcore_runtime_role_arn
   knowledge_base_id    = module.bedrock.knowledge_base_id
   guardrail_id         = module.bedrock.guardrail_id
   guardrail_arn        = module.bedrock.guardrail_arn

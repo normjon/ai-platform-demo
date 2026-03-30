@@ -1,40 +1,60 @@
-variable "name_prefix" {
-  description = "Prefix applied to all resource names."
+variable "project_name" {
+  description = "Project name. Used as part of all IAM resource names."
+  type        = string
+}
+
+variable "environment" {
+  description = "Deployment environment (dev, staging, production). Used as part of all IAM resource names."
   type        = string
 }
 
 variable "aws_region" {
-  description = "AWS region."
+  description = "AWS region. Used when constructing model ARNs and log group ARNs in IAM policies."
   type        = string
 }
 
-variable "account_id" {
-  description = "AWS account ID used in IAM policy ARN conditions."
+variable "aws_account_id" {
+  description = "AWS account ID. Used in trust policy conditions and IAM policy resource ARNs."
   type        = string
 }
 
-# ---------------------------------------------------------------------------
-# Resource ARNs — passed from dev/main.tf locals so iam/ never reconstructs
-# storage naming conventions internally (Step 3 module boundary rule).
-# ---------------------------------------------------------------------------
-
-variable "document_landing_bucket_arn" {
-  description = "ARN of the S3 document landing bucket. Used in the KB ingestion role policy."
+variable "kb_arn" {
+  description = "Bedrock Knowledge Base ARN. Granted to the AgentCore runtime role for Retrieve and RetrieveAndGenerate."
   type        = string
 }
 
-variable "session_memory_table_arn" {
-  description = "ARN of the DynamoDB session memory table. Used in the AgentCore role policy."
+variable "document_bucket_arn" {
+  description = "ARN of the S3 document landing bucket. Granted to the Bedrock KB role for source document reads and the Lambda role for document access."
   type        = string
 }
 
-variable "agent_registry_table_arn" {
-  description = "ARN of the DynamoDB agent registry table. Used in the AgentCore role policy."
+variable "prompt_vault_bucket_arn" {
+  description = "ARN of the S3 Prompt Vault bucket. Granted to the Lambda role for prompt template reads and writes."
+  type        = string
+}
+
+variable "opensearch_collection_arn" {
+  description = "ARN of the OpenSearch Serverless collection. Granted to the Bedrock KB role and the OpenSearch access role."
+  type        = string
+}
+
+variable "agentcore_log_group_arn" {
+  description = "ARN of the CloudWatch log group for AgentCore invocations. Granted to the AgentCore runtime role for log writes."
+  type        = string
+}
+
+variable "session_table_arn" {
+  description = "ARN of the DynamoDB session memory table. Granted to the Lambda role for session read/write."
+  type        = string
+}
+
+variable "registry_table_arn" {
+  description = "ARN of the DynamoDB agent registry table. Granted to the Lambda role for registry read/write."
   type        = string
 }
 
 variable "tags" {
-  description = "Tags applied to all resources."
+  description = "Additional tags merged onto all resources. ManagedBy, Module, Environment, and Project are always added."
   type        = map(string)
   default     = {}
 }

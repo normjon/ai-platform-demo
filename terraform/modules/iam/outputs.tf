@@ -1,14 +1,50 @@
-output "agentcore_role_arn" {
-  description = "IAM role ARN for the AgentCore runtime."
-  value       = aws_iam_role.agentcore.arn
+# ---------------------------------------------------------------------------
+# Role ARNs and names — consumed by agentcore/, bedrock/, storage/,
+# observability/ modules. Never hardcode these ARNs in other modules.
+# ---------------------------------------------------------------------------
+
+output "agentcore_runtime_role_arn" {
+  description = "ARN of the AgentCore runtime IAM role."
+  value       = aws_iam_role.agentcore_runtime.arn
+}
+
+output "agentcore_runtime_role_name" {
+  description = "Name of the AgentCore runtime IAM role."
+  value       = aws_iam_role.agentcore_runtime.name
 }
 
 output "bedrock_kb_role_arn" {
-  description = "IAM role ARN for Bedrock Knowledge Base ingestion."
+  description = "ARN of the Bedrock Knowledge Base ingestion IAM role."
   value       = aws_iam_role.bedrock_kb.arn
 }
 
+output "bedrock_kb_role_name" {
+  description = "Name of the Bedrock Knowledge Base ingestion IAM role."
+  value       = aws_iam_role.bedrock_kb.name
+}
+
+output "lambda_execution_role_arn" {
+  description = "ARN of the Lambda execution IAM role."
+  value       = aws_iam_role.lambda_execution.arn
+}
+
+output "lambda_execution_role_name" {
+  description = "Name of the Lambda execution IAM role."
+  value       = aws_iam_role.lambda_execution.name
+}
+
+output "opensearch_access_role_arn" {
+  description = "ARN of the OpenSearch Serverless direct-access IAM role."
+  value       = aws_iam_role.opensearch_access.arn
+}
+
+output "opensearch_access_role_name" {
+  description = "Name of the OpenSearch Serverless direct-access IAM role."
+  value       = aws_iam_role.opensearch_access.name
+}
+
+# Kept for consumption by storage/, observability/, and bedrock/ modules.
 output "storage_kms_key_arn" {
-  description = "KMS key ARN used to encrypt DynamoDB tables and S3 SSE."
+  description = "ARN of the KMS key used to encrypt S3, DynamoDB, and CloudWatch log groups."
   value       = aws_kms_key.storage.arn
 }

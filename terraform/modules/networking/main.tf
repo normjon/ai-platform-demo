@@ -60,7 +60,7 @@ resource "aws_security_group_rule" "agentcore_egress_https" {
 
 resource "aws_vpc_endpoint" "s3" {
   vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.s3"
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.s3"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
   tags              = merge(var.tags, { Name = "${var.name_prefix}-s3-endpoint" })
@@ -68,7 +68,7 @@ resource "aws_vpc_endpoint" "s3" {
 
 resource "aws_vpc_endpoint" "dynamodb" {
   vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${data.aws_region.current.name}.dynamodb"
+  service_name      = "com.amazonaws.${data.aws_region.current.region}.dynamodb"
   vpc_endpoint_type = "Gateway"
   route_table_ids   = [aws_route_table.private.id]
   tags              = merge(var.tags, { Name = "${var.name_prefix}-dynamodb-endpoint" })
@@ -76,7 +76,7 @@ resource "aws_vpc_endpoint" "dynamodb" {
 
 resource "aws_vpc_endpoint" "bedrock_runtime" {
   vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.bedrock-runtime"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-runtime"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.agentcore.id]
@@ -86,7 +86,7 @@ resource "aws_vpc_endpoint" "bedrock_runtime" {
 
 resource "aws_vpc_endpoint" "cloudwatch_logs" {
   vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.logs"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.logs"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.agentcore.id]
@@ -96,7 +96,7 @@ resource "aws_vpc_endpoint" "cloudwatch_logs" {
 
 resource "aws_vpc_endpoint" "aoss" {
   vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${data.aws_region.current.name}.aoss"
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.aoss"
   vpc_endpoint_type   = "Interface"
   subnet_ids          = aws_subnet.private[*].id
   security_group_ids  = [aws_security_group.agentcore.id]
