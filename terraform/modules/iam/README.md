@@ -116,3 +116,47 @@ than EKS pods), IRSA means:
   file, environment variable, or secret store.
 
 See ADR-001 and architecture document Section 8.1 for full rationale.
+
+## Known Issues and Build Notes
+
+### AWS Provider Must Be ~> 6.0
+
+The `agentcore/` module uses `aws_bedrockagentcore_agent_runtime`,
+`aws_bedrockagentcore_gateway`, and `aws_bedrockagentcore_gateway_target`.
+These resource types do not exist in hashicorp/aws `~> 5.x`. If `terraform validate`
+reports "The provider hashicorp/aws does not support resource type
+aws_bedrockagentcore_agent_runtime", the root cause is a `~> 5.0` constraint
+in `dev/main.tf`. Fix: update to `~> 6.0` and run `terraform init -upgrade`.
+
+### data.aws_region.current.name Deprecated in v6
+
+In hashicorp/aws v6, `data.aws_region.current.name` is deprecated. Use
+`data.aws_region.current.region` instead. The symptom is a deprecation warning
+on every VPC endpoint `service_name` in `networking/main.tf`. Fixed in the
+current codebase — note this if upgrading from a v5 snapshot.
+
+### Circular Dependency: kb_arn and opensearch_collection_arn
+
+`iam/` is called before `bedrock/` because `bedrock/` depends on
+`module.iam.bedrock_kb_role_arn` and `module.iam.storage_kms_key_arn`.
+This means `iam/` cannot reference `bedrock/` outputs — it would create a
+cycle. The `kb_arn` and `opensearch_collection_arn` inputs to this module are
+therefore set to placeholder strings in `dev/main.tf`:
+
+```hcl
+kb_arn                    = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:knowledge-base/PLACEHOLDER"
+opensearch_collection_arn = "arn:aws:aoss:${var.aws_region}:${var.account_id}:collection/PLACEHOLDER"
+```
+
+After the first `terraform apply`, retrieve the Knowledge Base ID and OpenSearch
+collection ID from the plan or AWS console, substitute them into `dev/main.tf`,
+and re-apply. The AgentCore runtime role's Retrieve permission and the Bedrock
+KB role's OpenSearch write permission will not be correctly scoped until this
+two-pass apply is complete.
+
+### glean_mcp_endpoint Must Start With https://
+
+The AWS provider validates that `aws_bedrockagentcore_gateway_target`
+`target_configuration.mcp.mcp_server.endpoint` starts with `https://`. If
+`terraform plan` fails with "Must start with https://", the placeholder value
+in `terraform.tfvars` has not been replaced with the real Glean MCP endpoint.
