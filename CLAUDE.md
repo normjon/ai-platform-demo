@@ -19,7 +19,7 @@ must be read before generating any resource, module, or configuration.
 ## Authoritative Knowledge Sources
 
 ### 1 — Architecture Document
-Location: docs/Enterprise_AI_Platform_Architecture_v2.docx
+Location: docs/Enterprise_AI_Platform_Architecture.md
 Read this before designing any component. It defines the account
 structure, OU hierarchy, service catalogue, agent manifest schema,
 MCP Gateway topology, memory architecture, security posture, and
@@ -76,9 +76,85 @@ Read these before generating AgentCore or Bedrock resource definitions:
 - Claude on AWS patterns:
   https://github.com/aws-samples/anthropic-on-aws
 
-Start with the basic-runtime Terraform pattern from the AgentCore
-samples as the baseline for any AgentCore runtime resource. Adapt
-it to follow ADR-001, ADR-004, and ADR-017 before using it.
+---
+
+## Terraform Authoring Guidelines
+
+Follow these four steps in order when writing Terraform for any
+AgentCore or Bedrock resource. Do not skip steps.
+
+### Step 1 — Fetch the AWS Labs baseline
+Fetch and read the relevant pattern from the AgentCore samples
+repository before writing any resource definitions. Do not rely
+on training knowledge for AgentCore resource definitions —
+AgentCore reached GA in October 2025 and training knowledge
+may be incomplete or outdated.
+
+  Basic runtime (AgentCore endpoint):
+  https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/04-infrastructure-as-code/terraform/basic-runtime
+
+  MCP server and Gateway:
+  https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/04-infrastructure-as-code/terraform/mcp-server-agentcore-runtime
+
+  Multi-agent workflows:
+  https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/04-infrastructure-as-code/terraform/multi-agent-runtime
+
+Use the sample to understand the required resource types, mandatory
+arguments, and dependency relationships. Use it as the baseline —
+not as a copy-paste source.
+
+### Step 2 — Adapt to platform standards
+After reading the sample, apply these constraints before writing
+any code:
+
+- ADR-001: Replace any hardcoded credentials, environment variable
+  credentials, or instance profiles with IRSA-scoped IAM roles.
+  All service identities use IAM roles assumed at execution time.
+  Never use long-lived credentials anywhere.
+
+- ADR-004: All container resources must target arm64/Graviton.
+  Set platform = "linux/arm64" on all container definitions.
+  See the ARM64 / Graviton Requirement section for the exact
+  Python dependency packaging command.
+
+- ADR-017: Reference IAM roles from the iam/ module outputs.
+  Never define IAM roles inline inside a resource module.
+  Every module receives role ARNs as input variables.
+
+- Architecture document Section 5.2: Use the agent manifest
+  schema for all AgentCore agent configuration values.
+
+- Architecture document Section 4.1: Use only the approved
+  model ARNs defined in the Approved Bedrock Model ARNs section
+  of this file. Never hardcode model identifiers.
+
+### Step 3 — Enforce module boundaries
+Never define IAM resources inside bedrock/, agentcore/,
+networking/, storage/, or observability/ modules.
+All IAM roles, policies, and attachments belong in iam/.
+Other modules receive role ARNs as input variables.
+
+Never define networking resources inside service modules.
+All VPCs, subnets, and security groups belong in networking/.
+Service modules receive vpc_id, subnet_ids, and
+security_group_ids as input variables.
+
+Never define storage resources inside service modules.
+All S3 buckets and DynamoDB tables belong in storage/.
+Service modules receive bucket names and table names as
+input variables.
+
+### Step 4 — Use consistent variable names
+Use these variable names across all modules so root module
+wiring in dev/main.tf is predictable and readable:
+
+  vpc_id           — VPC identifier
+  subnet_ids       — List of subnet identifiers
+  aws_region       — AWS region string
+  environment      — Environment name (dev, staging, production)
+  project_name     — Project identifier used in resource naming
+  tags             — Map of tags applied to all resources
+  kms_key_arn      — KMS key ARN for encryption
 
 ---
 
@@ -116,13 +192,14 @@ All Terraform lives under terraform/ at the repository root.
 Use this module structure exactly:
 ```
 terraform/
-  backend.tf          # Remote state config — S3 + DynamoDB
-  main.tf             # Root module — calls child modules
-  variables.tf        # Input variables with descriptions
-  outputs.tf          # Output values referenced by other modules
-  terraform.tfvars    # Dev environment variable values (git-ignored)
-  terraform.tfvars.example  # Template with placeholder values (committed)
-  /modules/
+  dev/
+    main.tf                   # Calls child modules, dev-specific config
+    backend.tf                # Dev account state — committed with real values
+    variables.tf              # Input variables with descriptions
+    outputs.tf                # Output values referenced by other modules
+    terraform.tfvars          # Dev values — git-ignored, never committed
+    terraform.tfvars.example  # Placeholder template — committed
+  modules/
     bedrock/          # Bedrock KB, model access, guardrails
     agentcore/        # AgentCore runtime, memory, gateway
     networking/       # VPC, subnets, security groups, PrivateLink
@@ -134,6 +211,59 @@ terraform/
 Each module must have its own README.md describing its purpose,
 inputs, outputs, and any non-obvious implementation decisions.
 Update the module README.md in the same PR as any module change.
+
+When staging and production environments are added, they each
+get their own folder at the same level as dev/ sharing the same
+modules. All environment differences live in the tfvars files
+and backend configuration — never in the module code itself.
+
+---
+
+## File Conventions
+
+Committed as real files (not .example):
+- terraform/dev/backend.tf        — Real dev values, committed to git.
+                                    Does not contain secrets.
+- All *.tf module files            — Always committed as real files.
+- terraform.tfvars.example         — Committed with placeholder values
+                                    as a template for engineers.
+
+Git-ignored, never committed:
+- terraform/dev/terraform.tfvars   — Contains environment-specific values.
+                                    Copy from terraform.tfvars.example
+                                    and populate before running Terraform.
+- .terraform/                      — Provider cache, never committed.
+- *.tfstate and *.tfstate.backup   — State files, never committed.
+- crash.log                        — Terraform crash log, never committed.
+- override.tf                      — Local overrides, never committed.
+
+Never create .example versions of .tf files. The only .example
+file in this repository is terraform.tfvars.example.
+
+---
+
+## Terraform Working Directory and Commands
+Always run Terraform commands from terraform/dev/ — not from
+the repository root or any other directory.
+
+```bash
+cd terraform/dev
+
+# One-time setup — create backend state resources first (manual)
+# Then initialise:
+terraform init
+
+# Always review the plan before applying:
+terraform plan -out=tfplan
+
+# Apply only after human review and explicit approval:
+terraform apply tfplan
+```
+
+Never run terraform apply without first running terraform plan
+and presenting the plan output for human review. Do not run
+terraform apply autonomously. Generate the plan, show it, and
+wait for explicit instruction to apply.
 
 ---
 
@@ -147,8 +277,8 @@ running terraform init. Use these exact resource names:
   State file key:  dev/terraform.tfstate
 
 Never use local state. Never share this state file with another
-environment. Configure backend.tf from backend.tf.example before
-running terraform init.
+environment. Replace <account-id> in terraform/dev/backend.tf before
+running terraform init from the terraform/dev/ directory.
 
 ---
 
@@ -168,17 +298,23 @@ the variables defined in variables.tf.
 ## ARM64 / Graviton Requirement
 All container images and Lambda functions must target arm64.
 AgentCore runtimes run on Graviton. Building Python dependencies
-on x86 causes silent import errors at runtime.
+on x86 causes silent import errors at runtime — not build errors.
+This failure mode is silent and will only surface when the agent
+is invoked, not during terraform apply.
 
 When packaging Python dependencies for Lambda or AgentCore:
-  uv pip install \
-    --python-platform aarch64-manylinux2014 \
-    --python-version "3.12" \
-    --target="$BUILD_DIR" \
-    --only-binary=:all:
+
+```bash
+uv pip install \
+  --python-platform aarch64-manylinux2014 \
+  --python-version "3.12" \
+  --target="$BUILD_DIR" \
+  --only-binary=:all:
+```
 
 Never omit --only-binary=:all: — it is required for cross-platform
-compatibility.
+binary compatibility. Never build dependencies on an x86 machine
+without this flag and expect them to run on Graviton.
 
 ---
 
@@ -191,6 +327,30 @@ compatibility.
 - No long-lived AWS credentials anywhere in the codebase, environment
   variables, or Terraform variable files
 - terraform.tfvars is git-ignored — never commit it
+- All secrets are managed through AWS Secrets Manager accessed
+  via IRSA-scoped roles — never passed as Terraform variables
+
+---
+
+## Commit Granularity
+Commit infrastructure changes at module granularity — one commit
+per module when building the initial scaffold, one commit per
+logical change when modifying existing modules.
+
+Do not commit all modules in a single commit. Individual module
+commits make the git history useful for understanding what was
+built and when, and make rollback straightforward if a specific
+module has a problem.
+
+Commit message format:
+  feat(module-name): description of what was added
+  fix(module-name): description of what was corrected
+  docs(module-name): documentation update only
+
+Examples:
+  feat(iam): add IRSA roles for AgentCore runtime and gateway
+  feat(networking): add VPC, subnets, and PrivateLink endpoints
+  fix(bedrock): correct Knowledge Base chunking strategy variable
 
 ---
 
