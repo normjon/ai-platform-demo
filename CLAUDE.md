@@ -227,6 +227,10 @@ Committed as real files (not .example):
 - All *.tf module files            — Always committed as real files.
 - terraform.tfvars.example         — Committed with placeholder values
                                     as a template for engineers.
+- .terraform.lock.hcl              — Committed so all engineers and CI/CD
+                                    pipelines use identical provider versions.
+                                    Re-run terraform init and commit the
+                                    updated lock file when upgrading providers.
 
 Git-ignored, never committed:
 - terraform/dev/terraform.tfvars   — Contains environment-specific values.
@@ -272,13 +276,13 @@ State file lives in S3 with DynamoDB locking per ADR-017.
 You must create the S3 bucket and DynamoDB table manually before
 running terraform init. Use these exact resource names:
 
-  S3 bucket:       ai-platform-terraform-state-dev-<account-id>
+  S3 bucket:       ai-platform-terraform-state-dev-096305373014
   DynamoDB table:  ai-platform-terraform-lock-dev
   State file key:  dev/terraform.tfstate
+  Region:          us-east-2
 
 Never use local state. Never share this state file with another
-environment. Replace <account-id> in terraform/dev/backend.tf before
-running terraform init from the terraform/dev/ directory.
+environment.
 
 ---
 
@@ -286,10 +290,12 @@ running terraform init from the terraform/dev/ directory.
 Only these model ARNs may be used in any Terraform resource,
 agent manifest, or application code in this repository:
 
-  Primary reasoning (dev):  anthropic.claude-sonnet-4-6
-  Evaluation/scoring:       anthropic.claude-haiku-4-5-20251001
-  Embeddings:               amazon.titan-embed-text-v2:0
+  Region (all environments):  us-east-2
+  Primary reasoning (dev):    anthropic.claude-sonnet-4-6
+  Evaluation/scoring:         anthropic.claude-haiku-4-5-20251001
+  Embeddings:                 amazon.titan-embed-text-v2:0
 
+All Bedrock and AgentCore resources must be provisioned in us-east-2.
 Never hardcode model ARNs in module code. Reference them through
 the variables defined in variables.tf.
 
