@@ -28,7 +28,7 @@ The platform is built on three technology pillars:
   search across organisational systems, exposed as an MCP tool
 
 Full architecture documentation is at
-`docs/Enterprise_AI_Platform_Architecture_v2.docx`.
+`docs/Enterprise_AI_Platform_Architecture.md`.
 
 ## Repository Structure
 ```
@@ -36,18 +36,19 @@ Full architecture documentation is at
 ├── CLAUDE.md              # Claude Code agent instructions (read first)
 ├── README.md              # This file
 ├── docs/                  # Architecture and reference documentation
-│   └── Enterprise_AI_Platform_Architecture_v2.docx
+│   └── Enterprise_AI_Platform_Architecture.md
 └── terraform/
-    ├── backend.tf          # Remote state configuration
-    ├── main.tf             # Root module
-    ├── variables.tf        # Input variables
-    ├── outputs.tf          # Output values
-    ├── terraform.tfvars.example  # Variable template
-    └── modules/
+    ├── dev/                # Dev environment root — run Terraform from here
+    │   ├── backend.tf          # Remote state configuration
+    │   ├── main.tf             # Root module — calls all child modules
+    │   ├── variables.tf        # Input variables
+    │   ├── outputs.tf          # Output values
+    │   └── terraform.tfvars.example  # Variable template (copy to terraform.tfvars)
+    └── modules/            # Reusable modules — shared across environments
         ├── bedrock/        # Bedrock KB, model access, guardrails
         ├── agentcore/      # AgentCore runtime, memory, gateway
-        ├── networking/     # VPC, subnets, security groups
-        ├── iam/            # IAM roles and policies
+        ├── networking/     # VPC, subnets, security groups, VPC endpoints
+        ├── iam/            # IAM roles and policies (IRSA)
         ├── storage/        # S3 buckets, DynamoDB tables
         └── observability/  # CloudWatch log groups and alarms
 ```
@@ -72,23 +73,22 @@ git clone
 cd 
 
 # 2. Configure remote state backend
-cp terraform/backend.tf.example terraform/backend.tf
-# Edit backend.tf with your S3 bucket name and account ID
+# Edit terraform/dev/backend.tf — replace <account-id> with your AWS account ID
 
 # 3. Configure variables
-cp terraform/terraform.tfvars.example terraform/terraform.tfvars
+cp terraform/dev/terraform.tfvars.example terraform/dev/terraform.tfvars
 # Edit terraform.tfvars with your dev environment values
 # Never commit terraform.tfvars — it is git-ignored
 
-# 4. Initialise Terraform
-cd terraform
+# 4. Initialise and plan from the dev directory
+cd terraform/dev
 terraform init
 
-# 5. Review the plan
-terraform plan
+# 5. Always review the plan before applying
+terraform plan -out=tfplan
 
-# 6. Apply
-terraform apply
+# 6. Apply only after reviewing the plan output
+terraform apply tfplan
 ```
 
 ## Key Decisions
