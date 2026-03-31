@@ -133,25 +133,34 @@ any code:
   of this file. Never hardcode model identifiers.
 
 ### Step 3 — Enforce module boundaries
-Never define IAM resources inside bedrock/, agentcore/,
-networking/, storage/, or observability/ modules.
-IAM roles and policies belong inline in the deployment layer that owns the
-resource (platform/, tools/<name>/, agents/<name>/). Service modules receive
-role ARNs as input variables — they never create roles themselves.
 
-Never define networking resources inside service modules.
-All VPCs, subnets, and security groups belong in networking/.
+**IAM** — Option B: inline ownership, never a shared module.
+Never put IAM roles or policies inside any reusable module
+(agentcore/, storage/, networking/, observability/, or the
+deprecated iam/ module). modules/iam/ is deprecated — do not
+add resources to it. IAM roles belong inline in the deployment
+layer that owns the resource they protect:
+  platform/      — agentcore_runtime role, bedrock_kb role
+  tools/<name>/  — that tool's Lambda execution role
+  agents/<name>/ — that agent's roles
+Service modules receive role ARNs as input variables and never
+create roles themselves.
+
+**Networking** — centralised in networking/, not in service modules.
+Never define VPCs, subnets, or security groups inside agentcore/,
+storage/, observability/, or any other service module.
 Service modules receive vpc_id, subnet_ids, and
 security_group_ids as input variables.
 
-Never define storage resources inside service modules.
-All S3 buckets and DynamoDB tables belong in storage/.
+**Storage** — centralised in storage/, not in service modules.
+Never define S3 buckets or DynamoDB tables inside agentcore/,
+observability/, or any other service module.
 Service modules receive bucket names and table names as
 input variables.
 
 ### Step 4 — Use consistent variable names
-Use these variable names across all modules so root module
-wiring in dev/main.tf is predictable and readable:
+Use these variable names across all modules so wiring between
+deployment layers and modules is predictable and readable:
 
   vpc_id           — VPC identifier
   subnet_ids       — List of subnet identifiers
