@@ -23,10 +23,9 @@ variable "agent_image_uri" {
   type        = string
 }
 
-variable "glean_mcp_endpoint" {
-  description = "Glean MCP server endpoint URL registered in the Gateway."
+variable "ecr_repository_url" {
+  description = "ECR repository URL (without tag). Passed from foundation layer output. Used for image push reference only - not consumed by runtime resource."
   type        = string
-  sensitive   = true
 }
 
 variable "subnet_ids" {

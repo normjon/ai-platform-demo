@@ -1,22 +1,4 @@
 # ---------------------------------------------------------------------------
-# ECR Repository - stores the agent container image.
-# Created here so the repository exists before the runtime references it.
-# Image push is a CI/CD concern and is not managed by Terraform.
-# ADR-009: image tags must be git SHAs - enforced by IMMUTABLE tag mutability.
-# ---------------------------------------------------------------------------
-
-resource "aws_ecr_repository" "agent" {
-  name                 = "${var.name_prefix}-hr-assistant"
-  image_tag_mutability = "IMMUTABLE"
-
-  image_scanning_configuration {
-    scan_on_push = true
-  }
-
-  tags = var.tags
-}
-
-# ---------------------------------------------------------------------------
 # AgentCore Runtime - single dev endpoint, VPC-private, Graviton (arm64).
 #
 # Resource type: aws_bedrockagentcore_agent_runtime (requires hashicorp/aws ~> 6.0)
@@ -83,16 +65,16 @@ resource "aws_bedrockagentcore_gateway" "mcp" {
   tags            = var.tags
 }
 
-resource "aws_bedrockagentcore_gateway_target" "glean_search" {
-  name               = "glean-search"
-  description        = "Glean Enterprise Search MCP tool - permissions-aware retrieval across all indexed systems."
-  gateway_identifier = aws_bedrockagentcore_gateway.mcp.gateway_id
-
-  target_configuration {
-    mcp {
-      mcp_server {
-        endpoint = var.glean_mcp_endpoint
-      }
-    }
-  }
-}
+# ---------------------------------------------------------------------------
+# Gateway Target (Glean Search) - NOT managed by Terraform.
+#
+# aws_bedrockagentcore_gateway_target validates live connectivity to the MCP
+# endpoint at CREATE time. A placeholder URL will always produce a FAILED
+# target. This resource must be created manually once a real Glean MCP
+# endpoint is available and verified reachable from the VPC.
+#
+# Deployment procedure: see terraform/modules/agentcore/README.md
+# Required IAM actions: bedrock-agentcore:CreateGatewayTarget,
+#                       bedrock-agentcore:DeleteGatewayTarget,
+#                       bedrock-agentcore:ListGatewayTargets
+# ---------------------------------------------------------------------------
