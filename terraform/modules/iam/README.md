@@ -15,14 +15,16 @@ The KMS key for encrypting S3 buckets, DynamoDB tables, and CloudWatch log
 groups is also created here. Its ARN is exposed as an output so storage/,
 observability/, and bedrock/ can consume it without circular dependencies.
 
+This module lives in the **foundation layer** (`terraform/dev/foundation/`).
+It is applied once and survives app layer destroy/apply cycles.
+
 ## Roles Created
 
 | Role | Name Pattern | Trust Principal | Purpose |
 |---|---|---|---|
-| AgentCore Runtime | `{project}-agentcore-runtime-{env}` | `bedrock-agentcore.amazonaws.com` | Invokes Bedrock models, retrieves from Knowledge Base, writes AgentCore logs |
-| Bedrock KB | `{project}-bedrock-kb-{env}` | `bedrock.amazonaws.com` | Reads source documents from S3, writes vectors to OpenSearch Serverless |
-| Lambda Execution | `{project}-lambda-{env}` | `lambda.amazonaws.com` | Evaluation and ingestion Lambda functions — Haiku only, scoped to platform resources |
-| OpenSearch Access | `{project}-opensearch-{env}` | `bedrock.amazonaws.com`, `bedrock-agentcore.amazonaws.com` | Direct vector index read/write beyond KB ingestion role scope |
+| AgentCore Runtime | `{project}-agentcore-runtime-{env}` | `bedrock-agentcore.amazonaws.com` | Invokes Bedrock models, writes AgentCore logs, reads/writes session memory |
+| Bedrock KB | `{project}-bedrock-kb-{env}` | `bedrock.amazonaws.com` | Reads source documents from S3 for future Knowledge Base ingestion |
+| Lambda Execution | `{project}-lambda-{env}` | `lambda.amazonaws.com` | Evaluation and ingestion Lambda functions — scoped to platform resources |
 
 ## Input Variables
 
@@ -32,10 +34,8 @@ observability/, and bedrock/ can consume it without circular dependencies.
 | `environment` | `string` | Yes | Environment name (dev, staging, production) |
 | `aws_region` | `string` | Yes | AWS region — used in model ARNs and log group ARNs within policies |
 | `aws_account_id` | `string` | Yes | AWS account ID — used in trust policy conditions and policy resource ARNs |
-| `kb_arn` | `string` | Yes | Bedrock Knowledge Base ARN — granted to the AgentCore runtime role |
 | `document_bucket_arn` | `string` | Yes | Document landing S3 bucket ARN — granted to the KB role and Lambda role |
 | `prompt_vault_bucket_arn` | `string` | Yes | Prompt Vault S3 bucket ARN — granted to the Lambda role |
-| `opensearch_collection_arn` | `string` | Yes | OpenSearch Serverless collection ARN — granted to the KB role and OpenSearch access role |
 | `agentcore_log_group_arn` | `string` | Yes | AgentCore CloudWatch log group ARN — granted to the AgentCore runtime role |
 | `session_table_arn` | `string` | Yes | DynamoDB session memory table ARN — granted to the Lambda role |
 | `registry_table_arn` | `string` | Yes | DynamoDB agent registry table ARN — granted to the Lambda role |
@@ -47,47 +47,39 @@ observability/, and bedrock/ can consume it without circular dependencies.
 |---|---|
 | `agentcore_runtime_role_arn` | AgentCore runtime role ARN — passed to the agentcore/ module |
 | `agentcore_runtime_role_name` | AgentCore runtime role name |
-| `bedrock_kb_role_arn` | Bedrock KB ingestion role ARN — passed to the bedrock/ module |
+| `bedrock_kb_role_arn` | Bedrock KB ingestion role ARN — passed to the bedrock/ module when re-enabled |
 | `bedrock_kb_role_name` | Bedrock KB ingestion role name |
 | `lambda_execution_role_arn` | Lambda execution role ARN — passed to any Lambda resource |
 | `lambda_execution_role_name` | Lambda execution role name |
-| `opensearch_access_role_arn` | OpenSearch direct-access role ARN |
-| `opensearch_access_role_name` | OpenSearch direct-access role name |
 | `storage_kms_key_arn` | KMS key ARN — passed to storage/, observability/, and bedrock/ modules |
 
 ## Example Usage
 
 ```hcl
-# In terraform/dev/main.tf
+# In terraform/dev/foundation/main.tf
 module "iam" {
-  source = "../modules/iam"
+  source = "../../modules/iam"
 
   project_name   = var.project_name
   environment    = var.environment
   aws_region     = var.aws_region
   aws_account_id = var.account_id
 
-  kb_arn                    = "arn:aws:bedrock:us-east-2:096305373014:knowledge-base/<id>"
-  document_bucket_arn       = "arn:aws:s3:::ai-platform-dev-document-landing-096305373014"
-  prompt_vault_bucket_arn   = "arn:aws:s3:::ai-platform-dev-prompt-vault-096305373014"
-  opensearch_collection_arn = "arn:aws:aoss:us-east-2:096305373014:collection/<id>"
-  agentcore_log_group_arn   = "arn:aws:logs:us-east-2:096305373014:log-group:/aws/agentcore/ai-platform-dev"
-  session_table_arn         = "arn:aws:dynamodb:us-east-2:096305373014:table/ai-platform-dev-session-memory"
-  registry_table_arn        = "arn:aws:dynamodb:us-east-2:096305373014:table/ai-platform-dev-agent-registry"
+  document_bucket_arn     = "arn:aws:s3:::ai-platform-dev-document-landing-096305373014"
+  prompt_vault_bucket_arn = "arn:aws:s3:::ai-platform-dev-prompt-vault-096305373014"
+  agentcore_log_group_arn = "arn:aws:logs:us-east-2:096305373014:log-group:/aws/agentcore/ai-platform-dev"
+  session_table_arn       = "arn:aws:dynamodb:us-east-2:096305373014:table/ai-platform-dev-session-memory"
+  registry_table_arn      = "arn:aws:dynamodb:us-east-2:096305373014:table/ai-platform-dev-agent-registry"
 
   tags = local.common_tags
 }
 
-# Consuming role ARNs in other modules:
+# Consuming role ARNs in the app layer via remote state:
+data "terraform_remote_state" "foundation" { ... }
+
 module "agentcore" {
   ...
-  agentcore_role_arn = module.iam.agentcore_runtime_role_arn
-}
-
-module "bedrock" {
-  ...
-  kb_role_arn = module.iam.bedrock_kb_role_arn
-  kms_key_arn = module.iam.storage_kms_key_arn
+  agentcore_role_arn = data.terraform_remote_state.foundation.outputs.agentcore_runtime_role_arn
 }
 ```
 
@@ -97,8 +89,8 @@ All roles in this module follow the IAM Roles for Service Accounts (IRSA) patter
 mandated by ADR-001. In the context of this platform (AWS managed services rather
 than EKS pods), IRSA means:
 
-- **One role per service** — AgentCore, Bedrock KB, Lambda, and OpenSearch each
-  have a dedicated role. No shared roles, no broad wildcard trust.
+- **One role per service** — AgentCore, Bedrock KB, and Lambda each have a
+  dedicated role. No shared roles, no broad wildcard trust.
 - **Service principal trust** — Each role is assumed via `sts:AssumeRole` by the
   specific AWS service principal (`bedrock-agentcore.amazonaws.com`,
   `bedrock.amazonaws.com`, `lambda.amazonaws.com`). No IAM users, no long-lived
@@ -125,8 +117,8 @@ The `agentcore/` module uses `aws_bedrockagentcore_agent_runtime`,
 `aws_bedrockagentcore_gateway`, and `aws_bedrockagentcore_gateway_target`.
 These resource types do not exist in hashicorp/aws `~> 5.x`. If `terraform validate`
 reports "The provider hashicorp/aws does not support resource type
-aws_bedrockagentcore_agent_runtime", the root cause is a `~> 5.0` constraint
-in `dev/main.tf`. Fix: update to `~> 6.0` and run `terraform init -upgrade`.
+aws_bedrockagentcore_agent_runtime", the root cause is a `~> 5.0` constraint.
+Fix: update to `~> 6.0` and run `terraform init -upgrade`.
 
 ### data.aws_region.current.name Deprecated in v6
 
@@ -135,24 +127,20 @@ In hashicorp/aws v6, `data.aws_region.current.name` is deprecated. Use
 on every VPC endpoint `service_name` in `networking/main.tf`. Fixed in the
 current codebase — note this if upgrading from a v5 snapshot.
 
-### Circular Dependency: kb_arn and opensearch_collection_arn
+### dynamodb_table Backend Parameter Deprecated in v6
 
-`iam/` is called before `bedrock/` because `bedrock/` depends on
-`module.iam.bedrock_kb_role_arn` and `module.iam.storage_kms_key_arn`.
-This means `iam/` cannot reference `bedrock/` outputs — it would create a
-cycle. The `kb_arn` and `opensearch_collection_arn` inputs to this module are
-therefore set to placeholder strings in `dev/main.tf`:
+Every `terraform init` and `terraform apply` prints:
 
-```hcl
-kb_arn                    = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:knowledge-base/PLACEHOLDER"
-opensearch_collection_arn = "arn:aws:aoss:${var.aws_region}:${var.account_id}:collection/PLACEHOLDER"
+```
+Warning: Deprecated Parameter
+The parameter "dynamodb_table" is deprecated. Use parameter "use_lockfile" instead.
 ```
 
-After the first `terraform apply`, retrieve the Knowledge Base ID and OpenSearch
-collection ID from the plan or AWS console, substitute them into `dev/main.tf`,
-and re-apply. The AgentCore runtime role's Retrieve permission and the Bedrock
-KB role's OpenSearch write permission will not be correctly scoped until this
-two-pass apply is complete.
+This is a cosmetic warning from the AWS provider v6 S3 backend. State locking
+continues to work correctly. To silence it, replace `dynamodb_table = "..."` with
+`use_lockfile = true` in both `foundation/backend.tf` and `app/backend.tf`, then
+re-run `terraform init`. The DynamoDB lock table still functions with `use_lockfile`
+— only the parameter name changed. Safe to ignore until the next provider upgrade.
 
 ### glean_mcp_endpoint Must Start With https://
 
