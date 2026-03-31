@@ -56,9 +56,10 @@ Critical rules from the ADR library (read the full ADR for rationale):
                              agent or infrastructure behaviour.
 - ADR-017 (infrastructure/): One state file per deployment layer per
                              account in S3 with DynamoDB locking.
-                             Dev environment uses foundation/ and app/
-                             layers with separate state keys. Never
-                             share state across accounts or layers.
+                             Dev environment uses foundation/, platform/,
+                             tools/, and agents/ layers with separate
+                             state keys. Never share state across
+                             accounts or layers.
 - ADR-018 (security/):       Validate all MCP Gateway inputs against
                              declared JSON schema before execution.
 - ADR-021 (ai-platform/):    All agent repositories must follow the
@@ -169,96 +170,138 @@ multi-account production topology described in the architecture
 document. Build only what is listed here. Do not provision
 staging or production resources.
 
-### In scope for dev:
-- Single AWS account with Bedrock enabled
+### In scope for dev (Phase 1):
+- Single AWS account with Bedrock enabled in us-east-2
+- VPC with private subnets and PrivateLink endpoints
+  for Bedrock and AgentCore
+- IAM roles using IRSA for all service identities
+- KMS key for encryption
 - One AgentCore endpoint (internal, dev configuration)
-- MCP Gateway with Glean Search tool registered via Lambda stub
-- Lambda-backed MCP stub (`glean-stub` module) — real HTTPS endpoint returning
-  mock search results. Replace with real Glean URL when available.
-- One test agent (HR Assistant) exercising the end-to-end path
+- MCP Gateway with stubbed Glean Search Lambda tool
+- One test agent (HR Assistant)
 - DynamoDB tables for session memory and agent registry
+- S3 bucket for Prompt Vault
 - CloudWatch log groups and basic alarms
-- IAM roles following IRSA pattern for all service identities
-- S3 buckets for Terraform state, Prompt Vault, and document landing
 
-### Out of scope for dev (do not provision):
+### Deferred to Phase 2 (do not provision now):
+- Bedrock Knowledge Base and OpenSearch Serverless collection
+- Real Glean MCP endpoint (stub Lambda used in Phase 1)
+- Document landing S3 bucket and ingestion pipeline
 - Multi-account AWS Organizations structure
 - Production or staging AgentCore endpoints
 - External production WAF and Cognito user pool
 - Fine-tuning pipeline infrastructure
-- Full MCP tool catalogue beyond Glean Search
-- CodePipeline promotion pipeline (manual deployment in dev)
+- CodePipeline promotion pipeline
 
 ---
 
 ## Terraform Structure
-All Terraform lives under terraform/ at the repository root.
-The dev environment uses a four-layer state structure. Use this structure exactly:
 
-```
-terraform/
-  dev/
-    foundation/               # Layer 1 — long-lived (VPC, KMS, ECR)
-      backend.tf              # State key: dev/foundation/terraform.tfstate
-      main.tf                 # networking + kms modules + aws_ecr_repository
-      variables.tf
-      outputs.tf              # Platform API: VPC, subnets, SGs, KMS, ECR
-      terraform.tfvars.example
-    platform/                 # Layer 2 — platform services (freely destroyable)
-      backend.tf              # State key: dev/platform/terraform.tfstate
-      main.tf                 # AgentCore runtime + gateway + storage + observability
-                              # + platform IAM roles (agentcore_runtime, bedrock_kb)
-      variables.tf
-      outputs.tf              # Platform API: gateway_id, vpc_id, subnet_ids, tables, buckets
-      terraform.tfvars.example
-    tools/
-      glean/                  # Layer 3 — Glean MCP tool (team-owned)
-        backend.tf            # State key: dev/tools/glean/terraform.tfstate
-        main.tf               # Lambda stub + gateway target + Glean IAM role
-        variables.tf
-        outputs.tf
-        terraform.tfvars.example
-    agents/
-      hr-assistant/           # Layer 3 — HR Assistant agent (team-owned, placeholder)
-        backend.tf            # State key: dev/agents/hr-assistant/terraform.tfstate
-        main.tf               # Agent-specific config (placeholder)
-        variables.tf
-        outputs.tf
-        terraform.tfvars.example
-  modules/
-    kms/              # KMS CMK (used by foundation only)
-    bedrock/          # Bedrock KB, model access, guardrails
-    agentcore/        # AgentCore runtime and MCP gateway (no IAM, no ECR)
-    glean-stub/       # Lambda MCP stub for dev Glean testing
-    networking/       # VPC, subnets, security groups, PrivateLink
-    storage/          # S3 buckets, DynamoDB tables
-    observability/    # CloudWatch log groups, alarms, dashboards
-```
+The dev environment uses a four-layer structure under
+terraform/dev/. Each layer has its own isolated Terraform
+state, its own backend.tf, and its own apply boundary.
+This provides blast radius isolation and enables self-service
+ownership — agent teams can apply the agents/ layer
+independently without touching platform or foundation.
 
-Layer boundary rules:
-- **Foundation** is destroyed only when decommissioning the environment entirely.
-  It contains the VPC, KMS key, and ECR repository — everything that must
-  survive platform/tools/agents destroy cycles.
-- **Platform** can be destroyed and reapplied freely. It reads foundation outputs
-  via `data "terraform_remote_state" "foundation"`. Never pass foundation values
-  as tfvars to the platform layer.
-- **Tools and agents** each have their own state file and are independently
-  deployable. They read from platform remote state only — not from foundation
-  directly. Platform re-exports all foundation values tools/agents need.
-- **IAM ownership (Option B)**: Each layer creates IAM roles for its own resources
-  inline in its main.tf. Platform creates agentcore_runtime and bedrock_kb roles.
-  Each tool creates its own Lambda execution role. Each agent creates its own roles.
-  Never put team-level IAM roles in foundation.
-- The ECR repository lives in foundation. The agentcore module receives
-  ecr_repository_url as an input variable — it does not own the resource.
+### Layer order — always apply in this sequence:
 
-Dependency direction (one-way only):
-  foundation <- platform <- tools/<name>
-                          <- agents/<name>
+  1. foundation/   — VPC, KMS, ECR. Apply once. Rarely changes.
+  2. platform/     — AgentCore, MCP Gateway, storage, observability.
+                     Depends on foundation remote state outputs.
+  3. tools/<name>/ — MCP tool integrations (e.g. tools/glean/).
+                     Depends on platform remote state outputs.
+                     Independently deployable per tool.
+  4. agents/<name>/ — Agent-specific configuration.
+                      Depends on platform remote state outputs.
+                      Independently deployable per agent team.
 
-Each module must have its own README.md describing its purpose,
-inputs, outputs, and any non-obvious implementation decisions.
-Update the module README.md in the same PR as any module change.
+### Never apply layers out of order.
+### Never collapse layers into a single root module.
+### Each layer must have its own backend.tf and state key.
+
+### Directory layout:
+
+  terraform/
+    dev/
+      foundation/         # VPC, subnets, security groups, KMS,
+      │  backend.tf        # ECR. Apply first. All other layers
+      │  main.tf           # depend on these outputs.
+      │  variables.tf
+      │  outputs.tf
+      │  terraform.tfvars         # git-ignored
+      │  terraform.tfvars.example # committed
+      │
+      platform/           # AgentCore runtime, MCP Gateway,
+      │  backend.tf        # storage, observability. Reads
+      │  main.tf           # foundation remote state.
+      │  variables.tf
+      │  outputs.tf
+      │  smoke-test.sh     # Tests 1-5: run after every apply
+      │  terraform.tfvars
+      │  terraform.tfvars.example
+      │
+      tools/
+      │  glean/           # Glean stub Lambda registered as
+      │     backend.tf     # MCP tool. Reads platform remote
+      │     main.tf        # state. Swap stub for real Glean
+      │     variables.tf   # endpoint in Phase 2 — no infra
+      │     outputs.tf     # changes required.
+      │     smoke-test.sh  # Tests 2a-2b: run after every apply
+      │     terraform.tfvars
+      │     terraform.tfvars.example
+      │
+      agents/
+         hr-assistant/    # HR Assistant agent configuration.
+            backend.tf    # Reads platform remote state.
+            main.tf       # Agent team ownership boundary.
+            variables.tf
+            outputs.tf
+            terraform.tfvars
+            terraform.tfvars.example
+
+  modules/                # Reusable modules called by layers above
+    kms/                  # KMS CMK — called by foundation
+    networking/           # VPC resources — called by foundation
+    agentcore/            # AgentCore runtime and MCP gateway — called by platform
+    storage/              # S3, DynamoDB — called by platform
+    observability/        # CloudWatch — called by platform
+    glean-stub/           # Lambda MCP stub — called by tools/glean
+    bedrock/              # DEFERRED — Phase 2 only
+    iam/                  # DEPRECATED — replaced by inline IAM in each layer
+
+### State key convention (one per layer):
+
+  foundation:          dev/foundation/terraform.tfstate
+  platform:            dev/platform/terraform.tfstate
+  tools/glean:         dev/tools/glean/terraform.tfstate
+  agents/hr-assistant: dev/agents/hr-assistant/terraform.tfstate
+
+### Remote state pattern between layers:
+
+Platform reads foundation outputs:
+
+  data "terraform_remote_state" "foundation" {
+    backend = "s3"
+    config = {
+      bucket = "ai-platform-terraform-state-dev-096305373014"
+      key    = "dev/foundation/terraform.tfstate"
+      region = "us-east-2"
+    }
+  }
+
+Tools and agents read platform outputs the same way.
+Tools and agents never read foundation state directly —
+always go through platform.
+
+### IAM ownership (Option B):
+
+Each layer creates IAM roles inline in its own main.tf.
+Platform creates agentcore_runtime and bedrock_kb roles.
+Each tool creates its own Lambda execution role.
+Each agent creates its own roles.
+Never define IAM roles inside reusable modules (agentcore/,
+storage/, networking/, observability/).
 
 When staging and production environments are added, they each
 get their own folder at the same level as dev/ with the same
@@ -298,48 +341,39 @@ files in this repository are terraform.tfvars.example in each layer.
 ---
 
 ## Terraform Working Directory and Commands
-Always run Terraform commands from the layer directory — never from
-the repository root or terraform/dev/ directly.
 
-Apply in dependency order: foundation → platform → tools/* → agents/*
-Destroy in reverse: agents/* → tools/* → platform → foundation
+Each layer has its own working directory. Always cd into
+the layer directory before running any Terraform command.
 
-```bash
-# ---- Foundation (run first, once per environment) ----
-cd terraform/dev/foundation
-terraform init        # one-time per machine
-terraform plan -out=tfplan
-terraform apply tfplan
+  # Apply in this order — never skip or reverse:
 
-# ---- Platform (run after foundation) ----
-cd terraform/dev/platform
-terraform init        # one-time per machine
-terraform plan -out=tfplan
-terraform apply tfplan
+  cd terraform/dev/foundation
+  terraform init && terraform plan -out=tfplan
+  # Wait for human review and approval before applying
+  terraform apply tfplan
 
-# ---- Tools (run after platform, each team runs their own) ----
-cd terraform/dev/tools/glean
-terraform init        # one-time per machine
-terraform plan -out=tfplan
-terraform apply tfplan
+  cd terraform/dev/platform
+  terraform init && terraform plan -out=tfplan
+  terraform apply tfplan
 
-# ---- Agents (run after platform, each team runs their own) ----
-cd terraform/dev/agents/hr-assistant
-terraform init        # one-time per machine
-terraform plan -out=tfplan
-terraform apply tfplan
+  cd terraform/dev/tools/glean
+  terraform init && terraform plan -out=tfplan
+  terraform apply tfplan
 
-# ---- Teardown (reverse order) ----
-cd terraform/dev/tools/glean && terraform destroy -auto-approve
-cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
-cd terraform/dev/platform && terraform destroy -auto-approve
-cd terraform/dev/foundation && terraform destroy -auto-approve
-```
+  cd terraform/dev/agents/hr-assistant
+  terraform init && terraform plan -out=tfplan
+  terraform apply tfplan
+
+  # Teardown in reverse order:
+
+  cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
+  cd terraform/dev/tools/glean && terraform destroy -auto-approve
+  cd terraform/dev/platform && terraform destroy -auto-approve
+  cd terraform/dev/foundation && terraform destroy -auto-approve
 
 Never run terraform apply without first running terraform plan
-and presenting the plan output for human review. Do not run
-terraform apply autonomously. Generate the plan, show it, and
-wait for explicit instruction to apply.
+and presenting the output for human review. Do not run
+terraform apply autonomously.
 
 ---
 
@@ -426,14 +460,19 @@ built and when, and make rollback straightforward if a specific
 module has a problem.
 
 Commit message format:
-  feat(module-name): description of what was added
-  fix(module-name): description of what was corrected
-  docs(module-name): documentation update only
+  feat(layer-or-module): description of what was added
+  fix(layer-or-module): description of what was corrected
+  docs(layer-or-module): documentation update only
 
 Examples:
-  feat(iam): add IRSA roles for AgentCore runtime and gateway
-  feat(networking): add VPC, subnets, and PrivateLink endpoints
-  fix(bedrock): correct Knowledge Base chunking strategy variable
+  feat(foundation): add VPC, subnets, and PrivateLink endpoints
+  feat(foundation): add IRSA roles for AgentCore and Lambda
+  feat(platform): add AgentCore runtime and MCP Gateway
+  feat(platform): add DynamoDB session memory and Prompt Vault
+  feat(tools/glean): add Glean stub Lambda MCP tool registration
+  feat(agents/hr-assistant): add HR Assistant agent configuration
+  fix(platform): correct AgentCore runtime arm64 configuration
+  docs(foundation): update README with VPC CIDR documentation
 
 ---
 
