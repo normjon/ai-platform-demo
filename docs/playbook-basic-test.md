@@ -5,13 +5,35 @@ as expected after a `terraform apply`. Run these tests in order after any
 apply, after credential rotation, or when investigating a suspected
 infrastructure issue.
 
+## Quick Run — Smoke Test Scripts
+
+Each deployment layer ships a self-contained smoke test script. Run these
+after every apply for fast pass/fail feedback:
+
+```bash
+# Platform tests (Tests 1-5)
+cd terraform/dev/platform && ./smoke-test.sh
+
+# Glean tool tests (Tests 2a-2b)
+cd terraform/dev/tools/glean && ./smoke-test.sh
+```
+
+Both scripts read values from `terraform output` automatically, emit colored
+PASS/FAIL per test, and exit non-zero if any test fails.
+
+The sections below document each test in detail for manual investigation and
+reference.
+
+---
+
 **Prerequisites**
 
 - AWS CLI configured with SSO credentials for account `096305373014` in
   `us-east-2`. Run `awssandbox` to refresh if credentials have expired.
 - `jq` and `python3` available in your shell.
-- Terraform outputs available: run `terraform output` from `terraform/dev/`
-  to confirm resource names if they differ from the values below.
+- Terraform outputs available: run `terraform output` from `terraform/dev/platform/`
+  for platform outputs (gateway ID, endpoint ID, tables, buckets). Run from
+  `terraform/dev/tools/glean/` for the Glean stub URL and gateway target ID.
 
 ---
 
@@ -21,8 +43,10 @@ Confirms the AgentCore runtime provisioned successfully and is accepting
 invocations.
 
 ```bash
+RUNTIME_ID=$(cd terraform/dev/platform && terraform output -raw agentcore_endpoint_id)
+
 aws bedrock-agentcore-control get-agent-runtime \
-  --agent-runtime-id ai_platform_dev_runtime-LXN4HNCjnf \
+  --agent-runtime-id "${RUNTIME_ID}" \
   --region us-east-2 \
   --query '{status: status, name: agentRuntimeName}' \
   --output table
@@ -42,10 +66,14 @@ aws bedrock-agentcore-control get-agent-runtime \
 
 **Pass condition:** `status = READY`
 
-**If it fails:** Check `aws bedrock-agentcore-control list-agent-runtimes --region us-east-2`
+**If it fails:** Run `aws bedrock-agentcore-control list-agent-runtimes --region us-east-2`
 to confirm the runtime exists. A status of `CREATING` means provisioning is
 still in progress — wait and retry. Any other status indicates a deployment
 problem; check CloudWatch log group `/aws/agentcore/ai-platform-dev`.
+
+**Note:** The runtime ID changes on every `terraform destroy` + `terraform apply`
+cycle. Always resolve it dynamically via `terraform output` or `list-agent-runtimes`
+rather than hardcoding it.
 
 ---
 
@@ -54,8 +82,10 @@ problem; check CloudWatch log group `/aws/agentcore/ai-platform-dev`.
 Confirms the MCP gateway is active and configured with AWS_IAM authorization.
 
 ```bash
+GATEWAY_ID=$(cd terraform/dev/platform && terraform output -raw agentcore_gateway_id)
+
 aws bedrock-agentcore-control get-gateway \
-  --gateway-identifier ai-platform-dev-mcp-gateway-zekfxdd0pn \
+  --gateway-identifier "${GATEWAY_ID}" \
   --region us-east-2 \
   --query '{status: status, name: name, protocol: protocolType, authType: authorizerType}' \
   --output table
@@ -75,9 +105,78 @@ aws bedrock-agentcore-control get-gateway \
 
 **Pass condition:** `status = READY`, `authType = AWS_IAM`, `protocol = MCP`
 
-**If it fails:** The gateway ID is fixed post-apply. Confirm the ID matches
-the `gateway_id` output from `module.agentcore`. If the gateway is in a
-`FAILED` state, re-run `terraform apply` to recreate it.
+**If it fails:** Confirm the gateway ID matches `terraform output agentcore_gateway_id`
+from `terraform/dev/platform/`. If the gateway is in a `FAILED` state, re-run
+`terraform apply` in `terraform/dev/platform/` to recreate it.
+
+---
+
+## Test 2a — MCP Gateway Target (Glean Stub) is READY
+
+Confirms the Glean stub Lambda is registered as a READY gateway target.
+
+```bash
+GATEWAY_ID=$(cd terraform/dev/platform && terraform output -raw agentcore_gateway_id)
+
+aws bedrock-agentcore-control get-gateway-target \
+  --gateway-identifier "${GATEWAY_ID}" \
+  --target-id $(aws bedrock-agentcore-control list-gateway-targets \
+    --gateway-identifier "${GATEWAY_ID}" \
+    --region us-east-2 \
+    --query 'items[?name==`glean-stub`].targetId' \
+    --output text) \
+  --region us-east-2 \
+  --query '{name: name, status: status}' \
+  --output table
+```
+
+**Expected output**
+
+```
+-----------------------------
+|      GetGatewayTarget     |
++-------------+-------------+
+|    name     |   status    |
++-------------+-------------+
+| glean-stub  |   READY     |
++-------------+-------------+
+```
+
+**Pass condition:** `status = READY`
+
+**If it fails:** Check the Lambda function URL is reachable:
+```bash
+STUB_URL=$(cd terraform/dev/tools/glean && terraform output -raw glean_stub_url)
+curl -s -X POST "${STUB_URL}" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq .
+```
+A valid response confirms the Lambda is healthy. If the target is FAILED,
+delete it and re-run `terraform apply` in `terraform/dev/tools/glean/`.
+
+---
+
+## Test 2b — Glean Stub MCP Tool Call
+
+Confirms the Lambda stub responds correctly to a tool invocation.
+
+```bash
+STUB_URL=$(cd terraform/dev/tools/glean && terraform output -raw glean_stub_url)
+
+curl -s -X POST "${STUB_URL}" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"search","arguments":{"query":"employee benefits policy"}}}' \
+  | python3 -c "import sys,json; r=json.load(sys.stdin); print(r['result']['content'][0]['text'][:120])"
+```
+
+**Expected output** (first 120 characters of mock result)
+
+```
+1. [STUB] employee benefits policy — Mock Document A
+   This is a placeholder result from the Glean stub Lambda.
+```
+
+**Pass condition:** Response contains `[STUB]` and the query text.
 
 ---
 
@@ -196,13 +295,15 @@ aws s3 rm s3://ai-platform-dev-document-landing-096305373014/smoke-test.txt \
 -------------------------------------------------------------------------------------------------
 |                                          HeadObject                                           |
 +--------------+--------------------------------------------------------------------------------+
-|  KMSKeyId    |  arn:aws:kms:us-east-2:096305373014:key/814fb399-94db-4c47-a234-4bf581ebf2fe   |
+|  KMSKeyId    |  arn:aws:kms:us-east-2:096305373014:key/7a48cb6e-c245-46a5-8751-8ae666bb57a8   |
 |  SSEAlgorithm|  aws:kms                                                                       |
 +--------------+--------------------------------------------------------------------------------+
 ```
 
 **Pass condition:** `SSEAlgorithm = aws:kms` and `KMSKeyId` contains the
-project KMS key ARN (`814fb399-94db-4c47-a234-4bf581ebf2fe`).
+project KMS key ARN. The key ID changes if foundation is destroyed and reapplied —
+verify the current key with `terraform output -raw kms_key_arn` from
+`terraform/dev/foundation/`.
 
 **If it fails:** An `AccessDenied` error means the caller does not have
 `s3:PutObject` or `kms:GenerateDataKey` on the bucket or key. A missing
@@ -217,30 +318,43 @@ applied — re-run `terraform apply` and check the
 After running all five tests, use this checklist:
 
 ```
-[ ] Test 1 — AgentCore runtime status = READY
-[ ] Test 2 — MCP gateway status = READY, authType = AWS_IAM
-[ ] Test 3 — Bedrock model responds to invocation
-[ ] Test 4 — DynamoDB session memory write + read returns smoke-test
-[ ] Test 5 — S3 object encrypted with project CMK
+[ ] Test 1  — AgentCore runtime status = READY
+[ ] Test 2  — MCP gateway status = READY, authType = AWS_IAM
+[ ] Test 2a — MCP gateway target (glean-stub) status = READY
+[ ] Test 2b — Glean stub tool call returns mock results
+[ ] Test 3  — Bedrock model responds to invocation
+[ ] Test 4  — DynamoDB session memory write + read returns smoke-test
+[ ] Test 5  — S3 object encrypted with project CMK
 ```
 
-All five passing confirms the core infrastructure path is operational:
-networking, IAM, KMS, storage, Bedrock model access, and the AgentCore
-runtime are functioning as designed.
+All seven passing confirms the full infrastructure path is operational:
+networking, IAM, KMS, storage, Bedrock model access, the AgentCore runtime,
+and the MCP Gateway → Lambda stub tool call path are all functioning.
 
-**Out of scope for this playbook:** The MCP gateway target (Glean Search)
-cannot be tested until a real Glean MCP endpoint is configured in
-`terraform.tfvars`. See `terraform/modules/iam/README.md` Known Issues for
-the gateway target deployment procedure.
+**Glean stub vs real Glean:** Tests 2a and 2b exercise the Lambda stub endpoint.
+When a real Glean MCP endpoint is available, update the gateway target endpoint
+in `terraform/dev/tools/glean/main.tf` and re-apply. The test commands remain the same.
 
 ---
 
 ## Teardown Notes
 
-Run from `terraform/dev/`:
+The dev environment uses four Terraform state layers. Destroy in reverse
+dependency order. Never destroy foundation while platform is up.
 
 ```bash
-terraform destroy -auto-approve
+# 1. Destroy tools and agents (order within this group doesn't matter)
+cd terraform/dev/tools/glean && terraform destroy -auto-approve
+cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
+
+# 2. Purge versioned S3 buckets before destroying platform (required — Terraform
+#    cannot delete non-empty versioned buckets). See S3 Known Issue below.
+
+# 3. Destroy platform layer
+cd terraform/dev/platform && terraform destroy -auto-approve
+
+# 4. Destroy foundation only when decommissioning the environment entirely
+cd terraform/dev/foundation && terraform destroy -auto-approve
 ```
 
 ### Known Issues During Destroy
@@ -272,9 +386,11 @@ apply), `terraform destroy` will fail to delete the gateway with:
 "Gateway has targets associated with it." Fix:
 
 ```bash
-# List targets
+# List targets (response key is "items", not "gatewayTargets")
 aws bedrock-agentcore-control list-gateway-targets \
-  --gateway-identifier <gateway-id> --region us-east-2
+  --gateway-identifier <gateway-id> --region us-east-2 \
+  --query 'items[].{targetId:targetId,name:name,status:status}' \
+  --output table
 
 # Delete each orphaned target
 aws bedrock-agentcore-control delete-gateway-target \
@@ -293,20 +409,29 @@ will fail to delete the bucket with `BucketNotEmpty`. Purge all versions
 and markers first:
 
 ```bash
-BUCKET="ai-platform-dev-document-landing-096305373014"
+for BUCKET in \
+  ai-platform-dev-document-landing-096305373014 \
+  ai-platform-dev-prompt-vault-096305373014; do
 
-# Delete all versions
-aws s3api list-object-versions --bucket $BUCKET --region us-east-2 \
-  --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json \
-  | jq '{Objects: ., Quiet: true}' \
-  | xargs -I{} aws s3api delete-objects --bucket $BUCKET --region us-east-2 --delete '{}'
+  echo "=== Purging ${BUCKET} ==="
 
-# Delete all delete markers  
-aws s3api list-object-versions --bucket $BUCKET --region us-east-2 \
-  --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json \
-  | jq '{Objects: ., Quiet: true}' \
-  | xargs -I{} aws s3api delete-objects --bucket $BUCKET --region us-east-2 --delete '{}'
+  VERSIONS=$(aws s3api list-object-versions --bucket "$BUCKET" --region us-east-2 \
+    --query 'Versions[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null)
+  if [ "$VERSIONS" != "null" ] && [ "$VERSIONS" != "[]" ] && [ -n "$VERSIONS" ]; then
+    DELETE_JSON=$(echo "$VERSIONS" | python3 -c \
+      "import sys,json; v=json.load(sys.stdin); print(json.dumps({'Objects':v,'Quiet':True}))")
+    aws s3api delete-objects --bucket "$BUCKET" --region us-east-2 --delete "$DELETE_JSON"
+  fi
+
+  MARKERS=$(aws s3api list-object-versions --bucket "$BUCKET" --region us-east-2 \
+    --query 'DeleteMarkers[].{Key:Key,VersionId:VersionId}' --output json 2>/dev/null)
+  if [ "$MARKERS" != "null" ] && [ "$MARKERS" != "[]" ] && [ -n "$MARKERS" ]; then
+    DELETE_JSON=$(echo "$MARKERS" | python3 -c \
+      "import sys,json; v=json.load(sys.stdin); print(json.dumps({'Objects':v,'Quiet':True}))")
+    aws s3api delete-objects --bucket "$BUCKET" --region us-east-2 --delete "$DELETE_JSON"
+  fi
+
+done
 ```
 
-Repeat for `ai-platform-dev-prompt-vault-096305373014`, then re-run
-`terraform destroy -auto-approve`.
+Run this for both buckets, then re-run `terraform destroy -auto-approve` in `terraform/dev/platform/`.

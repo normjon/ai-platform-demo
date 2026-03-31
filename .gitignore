@@ -9,6 +9,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Lambda build artefacts
+*.zip
+
 # Secrets
 *.pem
 *.key
