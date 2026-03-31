@@ -1,0 +1,10 @@
+# Copy this file to terraform.tfvars and fill in values.
+# terraform.tfvars is git-ignored — never commit it.
+
+aws_region   = "us-east-2"
+account_id   = "096305373014"
+environment  = "dev"
+project_name = "ai-platform"
+
+vpc_cidr             = "10.0.0.0/16"
+private_subnet_cidrs = ["10.0.1.0/24", "10.0.2.0/24"]
