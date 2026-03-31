@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# S3 buckets — public access blocked, versioning enabled on all (CLAUDE.md).
+# S3 buckets - public access blocked, versioning enabled on all (CLAUDE.md).
 # ---------------------------------------------------------------------------
 
 resource "aws_s3_bucket" "document_landing" {
@@ -61,7 +61,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "prompt_vault" {
 }
 
 # ---------------------------------------------------------------------------
-# DynamoDB tables — KMS encryption required on all (CLAUDE.md).
+# DynamoDB tables - KMS encryption required on all (CLAUDE.md).
 # ---------------------------------------------------------------------------
 
 resource "aws_dynamodb_table" "session_memory" {

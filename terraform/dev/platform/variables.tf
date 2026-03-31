@@ -1,11 +1,11 @@
 variable "aws_region" {
   description = "AWS region for all resources."
   type        = string
-  default     = "us-east-1"
+  default     = "us-east-2"
 }
 
 variable "account_id" {
-  description = "AWS account ID. Used in resource names that require global uniqueness (e.g. S3 state bucket)."
+  description = "AWS account ID. Used in resource names that require global uniqueness."
   type        = string
 }
 
@@ -26,18 +26,6 @@ variable "project_name" {
   default     = "ai-platform"
 }
 
-variable "vpc_cidr" {
-  description = "CIDR block for the platform VPC."
-  type        = string
-  default     = "10.0.0.0/16"
-}
-
-variable "private_subnet_cidrs" {
-  description = "CIDR blocks for private subnets (one per AZ, minimum two for HA)."
-  type        = list(string)
-  default     = ["10.0.1.0/24", "10.0.2.0/24"]
-}
-
 # ---------------------------------------------------------------------------
 # Approved Bedrock model ARNs — reference through variables only.
 # Never hardcode ARNs in module code (CLAUDE.md / ADR-009).
@@ -55,19 +43,7 @@ variable "model_arn_evaluation" {
   default     = "anthropic.claude-haiku-4-5-20251001"
 }
 
-variable "model_arn_embeddings" {
-  description = "Embedding model ARN. Used by the Bedrock Knowledge Base for vector indexing."
-  type        = string
-  default     = "amazon.titan-embed-text-v2:0"
-}
-
 variable "agent_image_uri" {
   description = "ECR image URI for the HR Assistant agent container. Tag must be a git SHA (ADR-009)."
   type        = string
-}
-
-variable "glean_mcp_endpoint" {
-  description = "Glean MCP server endpoint registered in the AgentCore MCP Gateway."
-  type        = string
-  sensitive   = true
 }

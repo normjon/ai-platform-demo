@@ -54,10 +54,11 @@ Critical rules from the ADR library (read the full ADR for rationale):
 - ADR-015 (process/):        Update README.md and CLAUDE.md in the
                              same PR as any change that affects
                              agent or infrastructure behaviour.
-- ADR-017 (infrastructure/): Each AWS account has exactly one
-                             Terraform state file in S3 with
-                             DynamoDB locking. Never share state
-                             across accounts.
+- ADR-017 (infrastructure/): One state file per deployment layer per
+                             account in S3 with DynamoDB locking.
+                             Dev environment uses foundation/ and app/
+                             layers with separate state keys. Never
+                             share state across accounts or layers.
 - ADR-018 (security/):       Validate all MCP Gateway inputs against
                              declared JSON schema before execution.
 - ADR-021 (ai-platform/):    All agent repositories must follow the
@@ -117,9 +118,11 @@ any code:
   See the ARM64 / Graviton Requirement section for the exact
   Python dependency packaging command.
 
-- ADR-017: Reference IAM roles from the iam/ module outputs.
-  Never define IAM roles inline inside a resource module.
-  Every module receives role ARNs as input variables.
+- ADR-017: Each deployment layer owns its own IAM resources (Option B).
+  Never define IAM roles inside reusable service modules (agentcore/,
+  storage/, etc.). IAM roles belong inline in the deployment layer that
+  owns the resource they protect (platform/, tools/<name>/, agents/<name>/).
+  Every service module receives role ARNs as input variables.
 
 - Architecture document Section 5.2: Use the agent manifest
   schema for all AgentCore agent configuration values.
@@ -131,8 +134,9 @@ any code:
 ### Step 3 — Enforce module boundaries
 Never define IAM resources inside bedrock/, agentcore/,
 networking/, storage/, or observability/ modules.
-All IAM roles, policies, and attachments belong in iam/.
-Other modules receive role ARNs as input variables.
+IAM roles and policies belong inline in the deployment layer that owns the
+resource (platform/, tools/<name>/, agents/<name>/). Service modules receive
+role ARNs as input variables — they never create roles themselves.
 
 Never define networking resources inside service modules.
 All VPCs, subnets, and security groups belong in networking/.
@@ -168,9 +172,9 @@ staging or production resources.
 ### In scope for dev:
 - Single AWS account with Bedrock enabled
 - One AgentCore endpoint (internal, dev configuration)
-- One Bedrock Knowledge Base (Platform Documentation KB)
-- OpenSearch Serverless collection for the Knowledge Base index
-- MCP Gateway with Glean Search tool registered
+- MCP Gateway with Glean Search tool registered via Lambda stub
+- Lambda-backed MCP stub (`glean-stub` module) — real HTTPS endpoint returning
+  mock search results. Replace with real Glean URL when available.
 - One test agent (HR Assistant) exercising the end-to-end path
 - DynamoDB tables for session memory and agent registry
 - CloudWatch log groups and basic alarms
@@ -189,79 +193,147 @@ staging or production resources.
 
 ## Terraform Structure
 All Terraform lives under terraform/ at the repository root.
-Use this module structure exactly:
+The dev environment uses a four-layer state structure. Use this structure exactly:
+
 ```
 terraform/
   dev/
-    main.tf                   # Calls child modules, dev-specific config
-    backend.tf                # Dev account state — committed with real values
-    variables.tf              # Input variables with descriptions
-    outputs.tf                # Output values referenced by other modules
-    terraform.tfvars          # Dev values — git-ignored, never committed
-    terraform.tfvars.example  # Placeholder template — committed
+    foundation/               # Layer 1 — long-lived (VPC, KMS, ECR)
+      backend.tf              # State key: dev/foundation/terraform.tfstate
+      main.tf                 # networking + kms modules + aws_ecr_repository
+      variables.tf
+      outputs.tf              # Platform API: VPC, subnets, SGs, KMS, ECR
+      terraform.tfvars.example
+    platform/                 # Layer 2 — platform services (freely destroyable)
+      backend.tf              # State key: dev/platform/terraform.tfstate
+      main.tf                 # AgentCore runtime + gateway + storage + observability
+                              # + platform IAM roles (agentcore_runtime, bedrock_kb)
+      variables.tf
+      outputs.tf              # Platform API: gateway_id, vpc_id, subnet_ids, tables, buckets
+      terraform.tfvars.example
+    tools/
+      glean/                  # Layer 3 — Glean MCP tool (team-owned)
+        backend.tf            # State key: dev/tools/glean/terraform.tfstate
+        main.tf               # Lambda stub + gateway target + Glean IAM role
+        variables.tf
+        outputs.tf
+        terraform.tfvars.example
+    agents/
+      hr-assistant/           # Layer 3 — HR Assistant agent (team-owned, placeholder)
+        backend.tf            # State key: dev/agents/hr-assistant/terraform.tfstate
+        main.tf               # Agent-specific config (placeholder)
+        variables.tf
+        outputs.tf
+        terraform.tfvars.example
   modules/
+    kms/              # KMS CMK (used by foundation only)
     bedrock/          # Bedrock KB, model access, guardrails
-    agentcore/        # AgentCore runtime, memory, gateway
+    agentcore/        # AgentCore runtime and MCP gateway (no IAM, no ECR)
+    glean-stub/       # Lambda MCP stub for dev Glean testing
     networking/       # VPC, subnets, security groups, PrivateLink
-    iam/              # All IAM roles and policies (IRSA pattern)
     storage/          # S3 buckets, DynamoDB tables
     observability/    # CloudWatch log groups, alarms, dashboards
 ```
+
+Layer boundary rules:
+- **Foundation** is destroyed only when decommissioning the environment entirely.
+  It contains the VPC, KMS key, and ECR repository — everything that must
+  survive platform/tools/agents destroy cycles.
+- **Platform** can be destroyed and reapplied freely. It reads foundation outputs
+  via `data "terraform_remote_state" "foundation"`. Never pass foundation values
+  as tfvars to the platform layer.
+- **Tools and agents** each have their own state file and are independently
+  deployable. They read from platform remote state only — not from foundation
+  directly. Platform re-exports all foundation values tools/agents need.
+- **IAM ownership (Option B)**: Each layer creates IAM roles for its own resources
+  inline in its main.tf. Platform creates agentcore_runtime and bedrock_kb roles.
+  Each tool creates its own Lambda execution role. Each agent creates its own roles.
+  Never put team-level IAM roles in foundation.
+- The ECR repository lives in foundation. The agentcore module receives
+  ecr_repository_url as an input variable — it does not own the resource.
+
+Dependency direction (one-way only):
+  foundation <- platform <- tools/<name>
+                          <- agents/<name>
 
 Each module must have its own README.md describing its purpose,
 inputs, outputs, and any non-obvious implementation decisions.
 Update the module README.md in the same PR as any module change.
 
 When staging and production environments are added, they each
-get their own folder at the same level as dev/ sharing the same
-modules. All environment differences live in the tfvars files
-and backend configuration — never in the module code itself.
+get their own folder at the same level as dev/ with the same
+four-layer split. All environment differences live in the
+tfvars files and backend configuration — never in module code.
 
 ---
 
 ## File Conventions
 
 Committed as real files (not .example):
-- terraform/dev/backend.tf        — Real dev values, committed to git.
-                                    Does not contain secrets.
-- All *.tf module files            — Always committed as real files.
-- terraform.tfvars.example         — Committed with placeholder values
-                                    as a template for engineers.
-- .terraform.lock.hcl              — Committed so all engineers and CI/CD
-                                    pipelines use identical provider versions.
-                                    Re-run terraform init and commit the
-                                    updated lock file when upgrading providers.
+- terraform/dev/foundation/backend.tf            — Real dev values, committed to git.
+- terraform/dev/platform/backend.tf              — Real dev values, committed to git.
+- terraform/dev/tools/glean/backend.tf           — Real dev values, committed to git.
+- terraform/dev/agents/hr-assistant/backend.tf   — Real dev values, committed to git.
+- All *.tf module files                          — Always committed as real files.
+- terraform.tfvars.example                       — Committed with placeholder values
+                                                   as a template for engineers.
+- .terraform.lock.hcl                            — Committed so all engineers and CI/CD
+                                                   pipelines use identical provider versions.
+                                                   Re-run terraform init and commit the
+                                                   updated lock file when upgrading providers.
 
 Git-ignored, never committed:
-- terraform/dev/terraform.tfvars   — Contains environment-specific values.
-                                    Copy from terraform.tfvars.example
-                                    and populate before running Terraform.
-- .terraform/                      — Provider cache, never committed.
-- *.tfstate and *.tfstate.backup   — State files, never committed.
-- crash.log                        — Terraform crash log, never committed.
-- override.tf                      — Local overrides, never committed.
+- terraform/dev/foundation/terraform.tfvars         — Environment-specific values.
+- terraform/dev/platform/terraform.tfvars           — Environment-specific values.
+- terraform/dev/tools/glean/terraform.tfvars        — Environment-specific values.
+- terraform/dev/agents/hr-assistant/terraform.tfvars — Environment-specific values.
+- .terraform/                          — Provider cache, never committed.
+- *.tfstate and *.tfstate.backup       — State files, never committed.
+- crash.log                            — Terraform crash log, never committed.
+- override.tf                          — Local overrides, never committed.
 
 Never create .example versions of .tf files. The only .example
-file in this repository is terraform.tfvars.example.
+files in this repository are terraform.tfvars.example in each layer.
 
 ---
 
 ## Terraform Working Directory and Commands
-Always run Terraform commands from terraform/dev/ — not from
-the repository root or any other directory.
+Always run Terraform commands from the layer directory — never from
+the repository root or terraform/dev/ directly.
+
+Apply in dependency order: foundation → platform → tools/* → agents/*
+Destroy in reverse: agents/* → tools/* → platform → foundation
 
 ```bash
-cd terraform/dev
-
-# One-time setup — create backend state resources first (manual)
-# Then initialise:
-terraform init
-
-# Always review the plan before applying:
+# ---- Foundation (run first, once per environment) ----
+cd terraform/dev/foundation
+terraform init        # one-time per machine
 terraform plan -out=tfplan
-
-# Apply only after human review and explicit approval:
 terraform apply tfplan
+
+# ---- Platform (run after foundation) ----
+cd terraform/dev/platform
+terraform init        # one-time per machine
+terraform plan -out=tfplan
+terraform apply tfplan
+
+# ---- Tools (run after platform, each team runs their own) ----
+cd terraform/dev/tools/glean
+terraform init        # one-time per machine
+terraform plan -out=tfplan
+terraform apply tfplan
+
+# ---- Agents (run after platform, each team runs their own) ----
+cd terraform/dev/agents/hr-assistant
+terraform init        # one-time per machine
+terraform plan -out=tfplan
+terraform apply tfplan
+
+# ---- Teardown (reverse order) ----
+cd terraform/dev/tools/glean && terraform destroy -auto-approve
+cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
+cd terraform/dev/platform && terraform destroy -auto-approve
+cd terraform/dev/foundation && terraform destroy -auto-approve
 ```
 
 Never run terraform apply without first running terraform plan
@@ -272,17 +344,22 @@ wait for explicit instruction to apply.
 ---
 
 ## Terraform State Configuration
-State file lives in S3 with DynamoDB locking per ADR-017.
+Each deployment layer has its own state file in S3 with DynamoDB locking.
+ADR-017 rule applied as: one state file per deployment layer per account.
 You must create the S3 bucket and DynamoDB table manually before
 running terraform init. Use these exact resource names:
 
   S3 bucket:       ai-platform-terraform-state-dev-096305373014
   DynamoDB table:  ai-platform-terraform-lock-dev
-  State file key:  dev/terraform.tfstate
   Region:          us-east-2
 
-Never use local state. Never share this state file with another
-environment.
+  Foundation state key:          dev/foundation/terraform.tfstate
+  Platform state key:            dev/platform/terraform.tfstate
+  Glean tool state key:          dev/tools/glean/terraform.tfstate
+  HR Assistant agent state key:  dev/agents/hr-assistant/terraform.tfstate
+
+Never use local state. Never share state files across environments
+or across layers within the same environment.
 
 ---
 

@@ -1,83 +1,80 @@
 # ---------------------------------------------------------------------------
-# AgentCore Runtime — single dev endpoint, private, Graviton (arm64).
+# AgentCore Runtime - single dev endpoint, VPC-private, Graviton (arm64).
 #
-# Resource type: aws_bedrockagentcore_runtime
+# Resource type: aws_bedrockagentcore_agent_runtime (requires hashicorp/aws ~> 6.0)
 # Reference baseline: https://github.com/awslabs/amazon-bedrock-agentcore-samples
 #   /tree/main/04-infrastructure-as-code/terraform/basic-runtime
 #
-# ADR-001: role_arn uses IRSA — no env-var credentials.
-# ADR-004: architecture = "arm64" — Graviton required.
-# ADR-009: agent_image_uri tag must be a git SHA — never 'latest'.
-# ADR-018: guardrail_configuration enforces content policy on all invocations.
+# ADR-001: role_arn uses IRSA - no env-var credentials.
+# ADR-004: container image must be built for arm64/Graviton (CLAUDE.md).
+#          Architecture is enforced at image build time (uv + aarch64 target),
+#          not as a provider attribute on this resource.
+# ADR-009: agent_image_uri tag must be a git SHA - never 'latest'.
 # ---------------------------------------------------------------------------
 
-resource "aws_bedrockagentcore_runtime" "dev" {
-  name        = "${var.name_prefix}-runtime"
-  description = "Dev AgentCore runtime for the HR Assistant test agent."
-  role_arn    = var.agentcore_role_arn
+resource "aws_bedrockagentcore_agent_runtime" "dev" {
+  # Underscores required - the provider rejects hyphens in agent_runtime_name.
+  agent_runtime_name = replace("${var.name_prefix}-runtime", "-", "_")
+  description        = "Dev AgentCore runtime for the HR Assistant test agent."
+  role_arn           = var.agentcore_role_arn
 
-  runtime_configuration {
+  agent_runtime_artifact {
     container_configuration {
-      image_uri    = var.agent_image_uri
-      architecture = "arm64"
-    }
-
-    network_configuration {
-      subnet_ids         = var.subnet_ids
-      security_group_ids = [var.agentcore_sg_id]
-      assign_public_ip   = false
-    }
-
-    environment_variables = {
-      AGENT_ENV            = "dev"
-      # Model ARN surfaced as env var so agent code references it without hardcoding (ADR-009).
-      BEDROCK_MODEL_ID     = var.model_arn_primary
-      KNOWLEDGE_BASE_ID    = var.knowledge_base_id
-      SESSION_MEMORY_TABLE = var.session_memory_table
-      AGENT_REGISTRY_TABLE = var.agent_registry_table
-      LOG_LEVEL            = "INFO"
-      # Structured JSON logging to stdout (ADR-003).
-      LOG_FORMAT           = "json"
+      container_uri = var.agent_image_uri
     }
   }
 
-  # Guardrail applied to all agent inputs and outputs (ADR-018).
-  # Verify the exact argument name against the AgentCore basic-runtime sample
-  # before applying: verify against Step 1 authoring guideline.
-  guardrail_configuration {
-    guardrail_identifier = var.guardrail_id
-    guardrail_version    = "DRAFT"
+  # VPC mode keeps the runtime private - no public internet exposure (CLAUDE.md security rules).
+  network_configuration {
+    network_mode = "VPC"
+    network_mode_config {
+      security_groups = [var.agentcore_sg_id]
+      subnets         = var.subnet_ids
+    }
   }
 
-  observability_configuration {
-    log_group = var.log_group_agentcore
+  environment_variables = {
+    AGENT_ENV = "dev"
+    # Model ARN surfaced as env var so agent code references it without hardcoding (ADR-009).
+    BEDROCK_MODEL_ID     = var.model_arn_primary
+    SESSION_MEMORY_TABLE = var.session_memory_table
+    AGENT_REGISTRY_TABLE = var.agent_registry_table
+    LOG_LEVEL            = "INFO"
+    # Structured JSON logging to stdout (ADR-003).
+    LOG_FORMAT = "json"
   }
 
   tags = var.tags
 }
 
 # ---------------------------------------------------------------------------
-# MCP Gateway — Glean Search tool registration.
-# ADR-018: input validation against declared schema enforced before execution.
-# Verify schema_configuration arguments against the AgentCore MCP sample
-# (Step 1 authoring guideline) before applying.
+# MCP Gateway - registers the Glean Search MCP tool.
+#
+# authorizer_type = "AWS_IAM": access is controlled by IAM policies on the
+# calling principal. No Cognito user pool is required in the dev environment.
+# ADR-018: input validation against declared schema is enforced in agent code,
+# not at the gateway infrastructure layer.
 # ---------------------------------------------------------------------------
 
 resource "aws_bedrockagentcore_gateway" "mcp" {
-  name        = "${var.name_prefix}-mcp-gateway"
-  description = "MCP Gateway for dev environment. Registers the Glean Search tool."
-  role_arn    = var.agentcore_role_arn
-  tags        = var.tags
+  name            = "${var.name_prefix}-mcp-gateway"
+  description     = "MCP Gateway for dev environment. Registers the Glean Search tool."
+  role_arn        = var.agentcore_role_arn
+  protocol_type   = "MCP"
+  authorizer_type = "AWS_IAM"
+  tags            = var.tags
 }
 
-resource "aws_bedrockagentcore_gateway_target" "glean_search" {
-  gateway_id  = aws_bedrockagentcore_gateway.mcp.id
-  name        = "glean-search"
-  description = "Glean Enterprise Search MCP tool — permissions-aware retrieval across all indexed systems."
-
-  target_configuration {
-    mcp_server_configuration {
-      endpoint = var.glean_mcp_endpoint
-    }
-  }
-}
+# ---------------------------------------------------------------------------
+# Gateway Target (Glean Search) - NOT managed by Terraform.
+#
+# aws_bedrockagentcore_gateway_target validates live connectivity to the MCP
+# endpoint at CREATE time. A placeholder URL will always produce a FAILED
+# target. This resource must be created manually once a real Glean MCP
+# endpoint is available and verified reachable from the VPC.
+#
+# Deployment procedure: see terraform/modules/agentcore/README.md
+# Required IAM actions: bedrock-agentcore:CreateGatewayTarget,
+#                       bedrock-agentcore:DeleteGatewayTarget,
+#                       bedrock-agentcore:ListGatewayTargets
+# ---------------------------------------------------------------------------

@@ -1,13 +1,13 @@
 # ---------------------------------------------------------------------------
-# OpenSearch Serverless collection — vector store for the Knowledge Base.
+# OpenSearch Serverless collection - vector store for the Knowledge Base.
 # ---------------------------------------------------------------------------
 
 resource "aws_opensearchserverless_security_policy" "encryption" {
   name        = "${var.name_prefix}-kb-enc"
   type        = "encryption"
-  description = "Encryption policy for the Knowledge Base vector collection — CMK."
+  description = "Encryption policy for the Knowledge Base vector collection - CMK."
 
-  # Uses the project CMK from iam/ — consistent with project-wide KMS posture.
+  # Uses the project CMK from iam/ - consistent with project-wide KMS posture.
   policy = jsonencode({
     Rules = [{
       Resource     = ["collection/${var.name_prefix}-kb"]
@@ -20,7 +20,7 @@ resource "aws_opensearchserverless_security_policy" "encryption" {
 resource "aws_opensearchserverless_security_policy" "network" {
   name        = "${var.name_prefix}-kb-net"
   type        = "network"
-  description = "Network policy — private VPC access only."
+  description = "Network policy - private VPC access only."
 
   policy = jsonencode([{
     Rules = [
@@ -59,12 +59,12 @@ resource "aws_opensearchserverless_collection" "kb" {
 }
 
 # ---------------------------------------------------------------------------
-# Bedrock Knowledge Base — Platform Documentation KB.
+# Bedrock Knowledge Base - Platform Documentation KB.
 # ---------------------------------------------------------------------------
 
 resource "aws_bedrockagent_knowledge_base" "platform_docs" {
   name        = "${var.name_prefix}-platform-docs-kb"
-  description = "Platform Documentation Knowledge Base — curated reference content for agents."
+  description = "Platform Documentation Knowledge Base - curated reference content for agents."
   role_arn    = var.kb_role_arn
 
   knowledge_base_configuration {
@@ -93,7 +93,7 @@ resource "aws_bedrockagent_knowledge_base" "platform_docs" {
 resource "aws_bedrockagent_data_source" "document_landing" {
   knowledge_base_id = aws_bedrockagent_knowledge_base.platform_docs.id
   name              = "${var.name_prefix}-document-landing"
-  description       = "S3 document landing bucket — source for KB ingestion."
+  description       = "S3 document landing bucket - source for KB ingestion."
 
   data_source_configuration {
     type = "S3"
@@ -104,7 +104,7 @@ resource "aws_bedrockagent_data_source" "document_landing" {
 }
 
 # ---------------------------------------------------------------------------
-# Bedrock Guardrail — applied to all agent invocations via agentcore module.
+# Bedrock Guardrail - applied to all agent invocations via agentcore module.
 # ---------------------------------------------------------------------------
 
 resource "aws_bedrock_guardrail" "default" {

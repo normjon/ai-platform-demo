@@ -1,5 +1,5 @@
 # ---------------------------------------------------------------------------
-# CloudWatch log groups — structured JSON to stdout (ADR-003).
+# CloudWatch log groups - structured JSON to stdout (ADR-003).
 # KMS encrypted (kms_key_arn from iam/ module).
 # Retention set to 90 days for dev; tighten for production.
 # ---------------------------------------------------------------------------
@@ -19,7 +19,7 @@ resource "aws_cloudwatch_log_group" "bedrock_kb" {
 }
 
 # ---------------------------------------------------------------------------
-# Basic alarms — dev baseline. Add detail in later phases.
+# Basic alarms - dev baseline. Add detail in later phases.
 # ---------------------------------------------------------------------------
 
 resource "aws_cloudwatch_metric_alarm" "agentcore_errors" {

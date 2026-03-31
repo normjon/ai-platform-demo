@@ -30,25 +30,53 @@ The platform is built on three technology pillars:
 Full architecture documentation is at
 `docs/Enterprise_AI_Platform_Architecture.md`.
 
+Agent container documentation (arm64 requirement, image push, placeholder
+vs real image) is at `docs/agent-container.md`.
+
 ## Repository Structure
 ```
 /
 ├── CLAUDE.md              # Claude Code agent instructions (read first)
 ├── README.md              # This file
-├── docs/                  # Architecture and reference documentation
-│   └── Enterprise_AI_Platform_Architecture.md
+└── docs/
+│   ├── Enterprise_AI_Platform_Architecture.md  # Full platform architecture
+│   ├── agent-container.md                      # arm64 image build, push, ECR, placeholder
+│   └── playbook-basic-test.md                  # Smoke tests and teardown runbook
 └── terraform/
-    ├── dev/                # Dev environment root — run Terraform from here
-    │   ├── backend.tf          # Remote state configuration
-    │   ├── main.tf             # Root module — calls all child modules
-    │   ├── variables.tf        # Input variables
-    │   ├── outputs.tf          # Output values
-    │   └── terraform.tfvars.example  # Variable template (copy to terraform.tfvars)
-    └── modules/            # Reusable modules — shared across environments
-        ├── bedrock/        # Bedrock KB, model access, guardrails
-        ├── agentcore/      # AgentCore runtime, memory, gateway
+    ├── dev/
+    │   ├── foundation/         # Layer 1 — long-lived: VPC, KMS, ECR (platform team)
+    │   │   ├── backend.tf          # State key: dev/foundation/terraform.tfstate
+    │   │   ├── main.tf             # networking + kms modules + ECR repository
+    │   │   ├── variables.tf
+    │   │   ├── outputs.tf          # Platform API: VPC, subnets, SGs, KMS, ECR
+    │   │   └── terraform.tfvars.example
+    │   ├── platform/           # Layer 2 — platform services (platform team)
+    │   │   ├── backend.tf          # State key: dev/platform/terraform.tfstate
+    │   │   ├── main.tf             # AgentCore runtime + gateway + storage + observability
+    │   │   │                       # + platform IAM roles (agentcore_runtime, bedrock_kb)
+    │   │   ├── variables.tf
+    │   │   ├── outputs.tf          # Platform API: gateway_id, tables, buckets, vpc re-exports
+    │   │   └── terraform.tfvars.example
+    │   ├── tools/
+    │   │   └── glean/          # Glean MCP tool (Glean/Search team)
+    │   │       ├── backend.tf      # State key: dev/tools/glean/terraform.tfstate
+    │   │       ├── main.tf         # Lambda stub + gateway target + Glean IAM role
+    │   │       ├── variables.tf
+    │   │       ├── outputs.tf
+    │   │       └── terraform.tfvars.example
+    │   └── agents/
+    │       └── hr-assistant/   # HR Assistant agent (placeholder)
+    │           ├── backend.tf      # State key: dev/agents/hr-assistant/terraform.tfstate
+    │           ├── main.tf         # Agent-specific config (placeholder)
+    │           ├── variables.tf
+    │           ├── outputs.tf
+    │           └── terraform.tfvars.example
+    └── modules/            # Reusable modules — shared across layers
+        ├── kms/            # KMS CMK (used by foundation only)
+        ├── bedrock/        # Bedrock KB, model access, guardrails (future)
+        ├── agentcore/      # AgentCore runtime and MCP gateway
+        ├── glean-stub/     # Lambda MCP stub for dev Glean testing
         ├── networking/     # VPC, subnets, security groups, VPC endpoints
-        ├── iam/            # IAM roles and policies (IRSA)
         ├── storage/        # S3 buckets, DynamoDB tables
         └── observability/  # CloudWatch log groups and alarms
 ```
@@ -58,38 +86,136 @@ Full architecture documentation is at
 Before running any Terraform commands:
 
 1. AWS CLI configured with SSO credentials for the dev account
+   (run `awssandbox` to refresh if credentials have expired)
 2. Terraform >= 1.6 installed
    (use `tfenv` — `brew install terraform` provides a deprecated version)
 3. S3 bucket and DynamoDB table for remote state created manually:
    - S3 bucket: `ai-platform-terraform-state-dev-<account-id>`
    - DynamoDB table: `ai-platform-terraform-lock-dev`
-4. `terraform.tfvars` created from `terraform.tfvars.example`
-   and populated with dev account values
+4. `terraform.tfvars` created in each layer from the `.example` file
 
 ## Getting Started
+
+The dev environment uses four independent Terraform state layers.
+**Apply in order: foundation → platform → tools → agents.**
+
 ```bash
 # 1. Clone the repository
-git clone 
-cd 
+git clone
+cd
 
-# 2. Configure remote state backend
-# Edit terraform/dev/backend.tf — replace <account-id> with your AWS account ID
+# ---- Foundation layer (VPC, KMS, ECR) ----
 
-# 3. Configure variables
-cp terraform/dev/terraform.tfvars.example terraform/dev/terraform.tfvars
-# Edit terraform.tfvars with your dev environment values
-# Never commit terraform.tfvars — it is git-ignored
+# 2. Configure foundation variables
+cp terraform/dev/foundation/terraform.tfvars.example terraform/dev/foundation/terraform.tfvars
+# Edit with your account values — never commit terraform.tfvars
 
-# 4. Initialise and plan from the dev directory
-cd terraform/dev
+# 3. Apply foundation
+cd terraform/dev/foundation
 terraform init
-
-# 5. Always review the plan before applying
 terraform plan -out=tfplan
+terraform apply tfplan
 
-# 6. Apply only after reviewing the plan output
+# 4. Push an arm64 agent image to ECR (see docs/agent-container.md for full details)
+GIT_SHA=$(git rev-parse --short HEAD)
+ECR_URL=$(terraform output -raw ecr_repository_url)
+IMAGE_URI="${ECR_URL}:${GIT_SHA}"
+aws ecr get-login-password --region us-east-2 \
+  | docker login --username AWS --password-stdin "${ECR_URL}"
+docker pull --platform linux/arm64 python:3.12-slim
+docker tag python:3.12-slim "${IMAGE_URI}"
+docker push "${IMAGE_URI}"
+
+# ---- Platform layer (AgentCore runtime, gateway, storage, observability) ----
+
+# 5. Configure platform variables
+cp terraform/dev/platform/terraform.tfvars.example terraform/dev/platform/terraform.tfvars
+# Set agent_image_uri to the ECR URI with the pushed git SHA tag
+
+# 6. Apply platform layer
+cd ../platform
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
+
+# ---- Tools layer (each tool team runs their own) ----
+
+# 7. Configure and apply the Glean stub tool
+cp terraform/dev/tools/glean/terraform.tfvars.example terraform/dev/tools/glean/terraform.tfvars
+cd ../tools/glean
+terraform init
+terraform plan -out=tfplan
 terraform apply tfplan
 ```
+
+## Iterative Dev Cycle
+
+The platform, tools, and agents layers are designed to be destroyed and
+reapplied freely. Foundation stays up throughout — no need to re-push the
+ECR image between cycles.
+
+```bash
+# Tool-only cycle (only the Glean tool, platform stays up)
+# Run from terraform/dev/tools/glean/
+terraform destroy -auto-approve
+terraform plan -out=tfplan
+terraform apply tfplan
+
+# Full platform cycle (destroys and recreates platform + all tools/agents)
+# Purge S3 versions first — see docs/playbook-basic-test.md S3 Known Issue
+cd terraform/dev/tools/glean && terraform destroy -auto-approve
+cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
+cd terraform/dev/platform && terraform destroy -auto-approve
+terraform plan -out=tfplan && terraform apply tfplan
+cd terraform/dev/tools/glean && terraform plan -out=tfplan && terraform apply tfplan
+
+# Note: terraform init is required once per layer per machine before first use.
+# If .terraform/ does not exist in a layer directory, run terraform init first.
+
+# Run smoke tests after any apply
+# See docs/playbook-basic-test.md
+```
+
+## Teardown
+
+Destroy in reverse dependency order. Never destroy foundation while platform is up.
+
+```bash
+# Destroy tools and agents first (order within this group doesn't matter)
+cd terraform/dev/tools/glean && terraform destroy -auto-approve
+cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
+
+# Purge versioned S3 buckets before destroying platform
+# See docs/playbook-basic-test.md — S3 versioned buckets not empty
+
+# Then platform
+cd terraform/dev/platform && terraform destroy -auto-approve
+
+# Then foundation (only when decommissioning the environment entirely)
+cd terraform/dev/foundation && terraform destroy -auto-approve
+```
+
+See `docs/playbook-basic-test.md` for known teardown issues (VPC endpoint ENIs,
+AgentCore VPC ENIs, S3 versioned bucket cleanup).
+
+## Known Issues
+
+**`dynamodb_table` backend deprecation warning**
+
+Every `terraform init` and `terraform apply` will print:
+
+```
+Warning: Deprecated Parameter
+The parameter "dynamodb_table" is deprecated. Use parameter "use_lockfile" instead.
+```
+
+This is a cosmetic warning from the AWS provider v6 S3 backend. State locking
+continues to work correctly with `dynamodb_table`. To silence the warning,
+replace `dynamodb_table` with `use_lockfile = true` in both `backend.tf` files
+and re-run `terraform init`. The DynamoDB lock table itself is still used when
+`use_lockfile = true` — the parameter name changed, not the mechanism.
+
+This is safe to ignore until the next planned provider upgrade.
 
 ## Key Decisions
 
@@ -102,7 +228,7 @@ the areas below.
 |---------------|-----|--------------|
 | AWS credential delivery | ADR-001 | Use IRSA — never instance profiles or env vars |
 | Container architecture | ADR-004 | All containers must target arm64/Graviton |
-| Terraform state | ADR-017 | One state file per account — never shared |
+| Terraform state | ADR-017 | One state file per layer per account — foundation, platform, tools/*, agents/* are separate |
 | MCP Gateway input validation | ADR-018 | Validate all inputs against schema before execution |
 | Agent CLAUDE.md structure | ADR-021 | Three-level hierarchy for all agent repositories |
 

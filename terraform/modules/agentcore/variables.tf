@@ -19,14 +19,13 @@ variable "model_arn_primary" {
 }
 
 variable "agent_image_uri" {
-  description = "ECR image URI for the agent container. Tag must be a git SHA — never 'latest' (ADR-009)."
+  description = "ECR image URI for the agent container. Tag must be a git SHA - never 'latest' (ADR-009)."
   type        = string
 }
 
-variable "glean_mcp_endpoint" {
-  description = "Glean MCP server endpoint URL registered in the Gateway."
+variable "ecr_repository_url" {
+  description = "ECR repository URL (without tag). Passed from foundation layer output. Used for image push reference only - not consumed by runtime resource."
   type        = string
-  sensitive   = true
 }
 
 variable "subnet_ids" {
@@ -50,22 +49,7 @@ variable "agent_registry_table" {
 }
 
 variable "agentcore_role_arn" {
-  description = "IAM role ARN assumed by the AgentCore runtime (IRSA — ADR-001)."
-  type        = string
-}
-
-variable "knowledge_base_id" {
-  description = "Bedrock Knowledge Base ID passed to the runtime as an environment variable."
-  type        = string
-}
-
-variable "guardrail_id" {
-  description = "Bedrock Guardrail ID applied to all agent invocations."
-  type        = string
-}
-
-variable "guardrail_arn" {
-  description = "Bedrock Guardrail ARN applied to all agent invocations."
+  description = "IAM role ARN assumed by the AgentCore runtime (IRSA - ADR-001)."
   type        = string
 }
 

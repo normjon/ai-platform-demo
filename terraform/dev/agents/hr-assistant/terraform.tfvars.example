@@ -1,0 +1,5 @@
+# terraform/dev/agents/hr-assistant/terraform.tfvars
+# Copy this file to terraform.tfvars and fill in the values.
+# Never commit terraform.tfvars — it is git-ignored.
+
+account_id = "096305373014"
