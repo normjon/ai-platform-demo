@@ -25,3 +25,19 @@ variable "project_name" {
   type        = string
   default     = "ai-platform"
 }
+
+variable "model_arn" {
+  description = "Bedrock model ARN for the HR Assistant agent. Must use an approved model ARN."
+  type        = string
+  default     = "anthropic.claude-sonnet-4-6"
+}
+
+variable "tags" {
+  description = "Map of tags to apply to all resources in this layer."
+  type        = map(string)
+  default = {
+    Project   = "ai-platform"
+    ManagedBy = "terraform"
+    Layer     = "agents/hr-assistant"
+  }
+}
