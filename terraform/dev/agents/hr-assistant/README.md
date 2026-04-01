@@ -16,10 +16,14 @@ platform and foundation layers:
 - **Guardrails** — Bedrock Guardrails with topic policies, content filters,
   PII anonymization, and contextual grounding
 - **Agent Manifest** — registered in the platform DynamoDB agent registry via
-  `local-exec` (see Component 3 note below)
+  `local-exec` (see Component 3 note below); includes KB ID from Phase 2
 - **Prompt Vault Lambda** — write path for persisting interaction records to S3
+- **HR Policies Knowledge Base** — OpenSearch Serverless + Bedrock Knowledge Base
+  with 8 HR policy documents; vector index pre-created by `null_resource` at apply
+- **HR Assistant Container** — arm64/Graviton FastAPI container image pushed to ECR;
+  deployed as the AgentCore runtime workload
 - **Golden Dataset** — 15 test cases for evaluating agent behaviour
-- **Smoke Test** — 4 integration tests run after every apply
+- **Smoke Tests** — 6 integration tests run after every apply (Phase 2: live invocations)
 
 ---
 
@@ -29,12 +33,22 @@ platform and foundation layers:
 |---|---|---|
 | `aws_bedrockagent_prompt` | `hr-assistant-system-prompt-dev` | System prompt stored in Bedrock Prompt Management |
 | `aws_bedrock_guardrail` | `hr-assistant-guardrail-dev` | Topic policies, content filters, PII anonymization |
-| `terraform_data` (local-exec) | — | Registers agent manifest in DynamoDB agent registry |
+| `terraform_data` (local-exec) | — | Registers agent manifest (with KB ID) in DynamoDB agent registry |
 | `aws_iam_role` | `hr-assistant-prompt-vault-writer-dev` | Lambda execution role — scoped to hr-assistant S3 prefix |
 | `aws_iam_role_policy` | `PromptVaultWriterPolicy` | S3 write, KMS, CloudWatch Logs |
 | `aws_cloudwatch_log_group` | `/aws/lambda/hr-assistant-prompt-vault-writer-dev` | 30-day retention, KMS encrypted |
 | `aws_lambda_function` | `hr-assistant-prompt-vault-writer-dev` | arm64/Graviton, python3.12 |
 | `aws_lambda_permission` | `AllowAgentCoreInvoke` | Allows AgentCore to invoke the Lambda |
+| `aws_opensearchserverless_security_policy` | `hr-policies-enc-dev` | AWS-managed encryption for collection |
+| `aws_opensearchserverless_security_policy` | `hr-policies-net-dev` | Public endpoint (required by Bedrock managed service) |
+| `aws_opensearchserverless_access_policy` | `hr-policies-data-dev` | Data access for KB role and Terraform caller |
+| `aws_opensearchserverless_collection` | `hr-policies-kb-dev` | VECTORSEARCH collection |
+| `null_resource` | `create_hr_policies_index` | Pre-creates `hr-policies-index` before KB creation |
+| `aws_iam_role` | `hr-policies-kb-role-dev` | Bedrock KB service role (Option B, scoped to this layer) |
+| `aws_iam_role_policy` | `HRPoliciesKBPolicy` | S3 read, OpenSearch write, Bedrock embedding, KMS decrypt |
+| `aws_bedrockagent_knowledge_base` | `hr-policies-kb-dev` | VECTOR KB backed by OpenSearch Serverless |
+| `aws_bedrockagent_data_source` | `hr-policies-s3-source` | S3 data source reading `hr-policies/` prefix |
+| 8× `aws_s3_object` | `hr-policies/*.md` | Dev HR policy documents uploaded to document landing bucket |
 
 ---
 
@@ -88,6 +102,84 @@ Expected: `action = GUARDRAIL_INTERVENED`, topic `Legal Advice` detected and blo
 
 ---
 
+## HR Policies Knowledge Base
+
+**KB ID:** resolved via `terraform output -raw knowledge_base_id`
+
+**Data source ID:** resolved via `terraform output -raw knowledge_base_data_source_id`
+
+**Documents indexed:** 8 HR policy markdown files from `kb-docs/`:
+
+| File | Content |
+|---|---|
+| `annual-leave-policy.md` | 25 days entitlement, carry-over, booking rules |
+| `sick-leave-policy.md` | SSP, enhanced sick pay tiers by service length |
+| `parental-leave-policy.md` | Maternity (52 weeks), paternity (2 weeks), SPL |
+| `remote-working-policy.md` | Hybrid model (3 days office), broadband allowance, equipment |
+| `expenses-policy.md` | Mileage rates, hotel limits, subsistence allowances |
+| `performance-review-process.md` | Annual cycle, 5 rating levels, PIP process |
+| `employee-assistance-programme.md` | 1800-EAP-HELP, 24/7, counselling and support |
+| `benefits-enrolment-guide.md` | 5% pension match, flexible benefits window |
+
+**Index pre-creation:** Bedrock KB requires the OpenSearch vector index to exist before
+KB creation. A `null_resource + local-exec` runs `scripts/create-os-index.py` (via
+`uv run --with boto3 --with opensearch-py`) after the collection is ACTIVE, with a
+60-second sleep for AOSS data access policy propagation.
+
+**Ingestion:** Run after apply (or whenever documents change):
+
+```bash
+KB_ID=$(terraform output -raw knowledge_base_id)
+DS_ID=$(terraform output -raw knowledge_base_data_source_id)
+
+aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id "${KB_ID}" \
+  --data-source-id "${DS_ID}" \
+  --region us-east-2
+
+# Poll until COMPLETE
+aws bedrock-agent get-ingestion-job \
+  --knowledge-base-id "${KB_ID}" \
+  --data-source-id "${DS_ID}" \
+  --ingestion-job-id <JOB_ID> \
+  --region us-east-2 \
+  --query 'ingestionJob.{status:status,stats:statistics}'
+```
+
+---
+
+## HR Assistant Container
+
+**Location:** `container/`
+
+**Image tag convention:** git SHA (`git rev-parse --short HEAD`), per ADR-009.
+
+**Build and push:**
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+ECR_URI="${ACCOUNT_ID}.dkr.ecr.us-east-2.amazonaws.com/ai-platform-hr-assistant"
+GIT_SHA=$(git rev-parse --short HEAD)
+
+# Authenticate to public ECR (for base image) and private ECR
+aws ecr-public get-login-password --region us-east-1 | \
+  docker login --username AWS --password-stdin public.ecr.aws
+
+aws ecr get-login-password --region us-east-2 | \
+  docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.us-east-2.amazonaws.com"
+
+docker build --platform linux/arm64 \
+  -t "${ECR_URI}:${GIT_SHA}" \
+  container/
+
+docker push "${ECR_URI}:${GIT_SHA}"
+```
+
+**Update the platform layer:** After pushing, update `agent_image_uri` in
+`terraform/dev/platform/terraform.tfvars` and run `terraform apply` in the platform layer.
+
+---
+
 ## Agent Manifest (Component 3)
 
 The agent manifest is registered in the platform DynamoDB agent registry table
@@ -95,18 +187,15 @@ The agent manifest is registered in the platform DynamoDB agent registry table
 
 **Why local-exec:** As of AWS provider v6 (October 2025 GA), there is no native
 Terraform resource for registering a declarative agent manifest against an existing
-AgentCore runtime endpoint. The `aws_bedrockagentcore_agent_runtime` resource manages
-container-based runtimes and is not applicable here. When a native resource becomes
-available (expected: `aws_bedrockagentcore_agent_configuration` or equivalent),
-replace the `terraform_data` block in `main.tf`.
+AgentCore runtime endpoint. When a native resource becomes available (expected:
+`aws_bedrockagentcore_agent_configuration` or equivalent), replace the `terraform_data`
+block in `main.tf`.
 
-**CLI command used:**
-```bash
-aws dynamodb put-item \
-  --region us-east-2 \
-  --table-name ai-platform-dev-agent-registry \
-  --item '{ "agent_id": {"S": "hr-assistant-dev"}, ... }'
-```
+**Manifest fields registered (Phase 2):** `agent_id`, `display_name`, `model_arn`,
+`system_prompt_arn`, `guardrail_id`, `guardrail_version`, `endpoint_id`, `gateway_id`,
+`knowledge_base_id`, `allowed_tools`, `data_classification_ceiling`, `session_ttl_hours`,
+`grounding_score_min`, `response_latency_p95_ms`, `monthly_usd_limit`,
+`alert_threshold_pct`, `environment`, `registered_at`.
 
 To verify the manifest is registered:
 
@@ -116,6 +205,38 @@ aws dynamodb get-item \
   --table-name ai-platform-dev-agent-registry \
   --key '{"agent_id": {"S": "hr-assistant-dev"}}' \
   --output json
+```
+
+---
+
+## Live Agent Invocation
+
+The HR Assistant is invoked via the AgentCore data plane. Use a unique
+`sessionId` in the payload for each conversation — it is not forwarded
+from `--runtime-session-id` to the container.
+
+```bash
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+RUNTIME_ID=$(terraform output -raw agentcore_endpoint_id)
+RUNTIME_ARN="arn:aws:bedrock-agentcore:us-east-2:${ACCOUNT_ID}:runtime/${RUNTIME_ID}"
+SESSION_ID="my-session-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+
+PAYLOAD=$(python3 -c "
+import json, base64
+print(base64.b64encode(json.dumps({
+    'prompt': 'How many days of annual leave am I entitled to?',
+    'sessionId': '${SESSION_ID}'
+}).encode()).decode())
+")
+
+aws bedrock-agentcore invoke-agent-runtime \
+  --region us-east-2 \
+  --agent-runtime-arn "${RUNTIME_ARN}" \
+  --runtime-session-id "${SESSION_ID}" \
+  --payload "${PAYLOAD}" \
+  /tmp/response.json
+
+python3 -c "import json; print(json.load(open('/tmp/response.json'))['response'])"
 ```
 
 ---
@@ -136,31 +257,6 @@ To query records for a given date:
 ```bash
 aws s3 ls s3://ai-platform-dev-prompt-vault-096305373014/prompt-vault/hr-assistant/$(date +%Y/%m/%d)/ \
   --region us-east-2
-```
-
-To invoke the Lambda manually with a test event:
-
-```bash
-cat > /tmp/test-event.json << 'EOF'
-{
-  "sessionId": "manual-test-001",
-  "input": "How many days of annual leave?",
-  "output": "You are entitled to 25 days per year.",
-  "toolCalls": [],
-  "guardrailResult": {"action": "NONE", "topicPolicyResult": "", "contentFilterResult": ""},
-  "modelArn": "anthropic.claude-sonnet-4-6",
-  "inputTokens": 50,
-  "outputTokens": 30,
-  "latencyMs": 800
-}
-EOF
-
-aws lambda invoke \
-  --region us-east-2 \
-  --function-name hr-assistant-prompt-vault-writer-dev \
-  --payload file:///tmp/test-event.json \
-  --cli-binary-format raw-in-base64-out \
-  /tmp/response.json && cat /tmp/response.json
 ```
 
 ---
@@ -192,14 +288,16 @@ Reads the following outputs from the platform layer via `terraform_remote_state`
 | `agentcore_gateway_id` | Agent manifest registration |
 | `agent_registry_table` | DynamoDB agent registry target for local-exec |
 | `prompt_vault_bucket` | Lambda environment variable, IAM S3 resource ARN |
-| `kms_key_arn` | Lambda IAM KMS permissions, CloudWatch log group encryption |
+| `kms_key_arn` | Lambda IAM KMS permissions, CloudWatch log group encryption, KB KMS decrypt |
 
 ---
 
 ## Prerequisites
 
-- Platform layer applied.
+- Foundation and Platform layers applied.
 - `terraform.tfvars` created with `account_id` set.
+- HR Assistant container image built and pushed to ECR (image tag in platform `terraform.tfvars`).
+- Python 3 and `uv` installed locally (required for `null_resource` index creation script).
 
 ---
 
@@ -213,8 +311,17 @@ cp terraform.tfvars.example terraform.tfvars
 # Set account_id — all other variables have safe defaults
 
 terraform plan -out=tfplan
-# Expect: 8 resources to add
 terraform apply tfplan
+# Expect: ~20 resources to add
+# null_resource waits 60s for AOSS policy propagation then creates vector index
+
+# Trigger KB ingestion after apply
+KB_ID=$(terraform output -raw knowledge_base_id)
+DS_ID=$(terraform output -raw knowledge_base_data_source_id)
+aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id "${KB_ID}" \
+  --data-source-id "${DS_ID}" \
+  --region us-east-2
 ```
 
 ---
@@ -225,11 +332,9 @@ terraform apply tfplan
 cd terraform/dev/agents/hr-assistant
 
 terraform destroy -auto-approve
-# Expect: 8 resources destroyed
-
 terraform plan -out=tfplan
 terraform apply tfplan
-# Expect: 8 resources added
+# Re-trigger ingestion after re-apply
 ```
 
 ---
@@ -243,46 +348,51 @@ cd terraform/dev/agents/hr-assistant
 ./smoke-test.sh
 ```
 
-**Tests covered:**
+**Tests covered (Phase 2):**
 
 | Test | What it checks | Pass condition |
 |---|---|---|
-| 7a | System prompt deployed and contains in-scope HR guidance | Prompt retrieved from Bedrock; contains `glean-search` and `annual leave` |
+| 7a | Live AgentCore invocation — annual leave question | Response contains "25" (KB-grounded from annual-leave-policy.md) |
 | 7b | Guardrail blocks legal advice input | `action = GUARDRAIL_INTERVENED`; topic `Legal Advice` detected |
-| 7c | Safety redirect (EAP) configured in system prompt | Prompt text contains `1800-EAP-HELP` |
-| 7d | Prompt Vault Lambda writes to S3 | Lambda returns 200 with S3 key matching `prompt-vault/hr-assistant/YYYY/MM/DD/*.json` |
-
-**Phase 1 note:** Tests 7a and 7c validate Bedrock resources directly (system prompt API,
-prompt text content). Tests 7b and 7d exercise live AWS APIs (Guardrails, Lambda).
-Live end-to-end runtime invocations (7a/7c via AgentCore) are deferred to Phase 2
-when the HR Assistant container is built and deployed. See Phase 1 Known Limitations.
+| 7c | Live AgentCore invocation — distress prompt | Response contains `1800-EAP-HELP` (EAP safety redirect) |
+| 7d | Prompt Vault Lambda writes to S3 | Lambda returns S3 key matching `prompt-vault/hr-assistant/YYYY/MM/DD/*.json` |
+| 7e | CloudWatch logs confirm KB retrieval | `kb_retrieve` event with correct KB ID in last 5 min of runtime log group |
+| 7f | Glean stub Lambda MCP tools/call | Glean Lambda returns search results for MCP `tools/call` request |
 
 ---
 
 ## Observability
 
-AgentCore runtime logs appear in the platform layer's log group:
+AgentCore runtime logs (structured JSON, ADR-003):
 
 ```
-/aws/agentcore/ai-platform-dev
+/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT
+```
+
+Resolve the log group name:
+
+```bash
+RUNTIME_ID=$(terraform output -raw agentcore_endpoint_id)
+echo "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT"
+```
+
+Query for recent agent invocations:
+
+```bash
+RUNTIME_ID=$(terraform output -raw agentcore_endpoint_id)
+aws logs filter-log-events \
+  --log-group-name "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" \
+  --region us-east-2 \
+  --filter-pattern '"agent_invoke"' \
+  --start-time $(python3 -c "import time; print(int((time.time()-3600)*1000))") \
+  --query 'events[*].message' \
+  --output text
 ```
 
 Prompt Vault Lambda logs:
 
 ```
 /aws/lambda/hr-assistant-prompt-vault-writer-dev
-```
-
-Query Lambda logs for recent errors:
-
-```bash
-aws logs filter-log-events \
-  --log-group-name /aws/lambda/hr-assistant-prompt-vault-writer-dev \
-  --region us-east-2 \
-  --filter-pattern '{ $.status = "error" }' \
-  --start-time $(date -v-1H +%s000) \
-  --query 'events[].message' \
-  --output text
 ```
 
 ---
@@ -315,17 +425,12 @@ If the platform layer is subsequently destroyed, the S3 bucket versioning will
 prevent `terraform destroy` from completing. Purge the objects first — see
 the purge script in `terraform/dev/platform/README.md` (Destroy section).
 
----
+**`--runtime-session-id` not forwarded to container**
 
-## Phase 1 Known Limitations
-
-| Limitation | Notes |
-|---|---|
-| No Bedrock Knowledge Base | Deferred to Phase 2. Glean stub Lambda returns mock results. |
-| Glean stub (not real Glean) | `tools/glean/` deploys a stub Lambda. Replace with real Glean endpoint in Phase 2 — no infra changes required. |
-| System prompt uses dev placeholders | `[COMPANY_NAME]`, `hr@example.com`, `1800-EAP-HELP`. Not for production use. |
-| Agent manifest uses `local-exec` | No native Terraform resource for AgentCore declarative agent configuration in provider v6. Replace when `aws_bedrockagentcore_agent_configuration` is available. |
-| No live runtime invocation in smoke test | AgentCore runtime is container-based. No HR Assistant container deployed in Phase 1. Smoke tests 7a/7c validate Bedrock resources directly instead. |
+The `--runtime-session-id` CLI flag is used by the AgentCore control plane for
+routing/tracking but is NOT forwarded to the container as the
+`X-Amzn-Bedrock-AgentCore-Session-Id` header. Always include `sessionId` in the
+payload JSON to control session isolation.
 
 ---
 
@@ -336,4 +441,4 @@ the purge script in `terraform/dev/platform/README.md` (Destroy section).
 2. Create IAM roles inline in `main.tf` — Option B ownership: do not add them
    to foundation or platform.
 3. Add outputs to `outputs.tf` for values that tests or other systems reference.
-4. Update this README and run the smoke test after every apply.
+4. Update this README and run the smoke test after every apply (ADR-015).
