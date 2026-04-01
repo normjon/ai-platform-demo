@@ -32,9 +32,9 @@ variable "project_name" {
 # ---------------------------------------------------------------------------
 
 variable "model_arn_primary" {
-  description = "Primary reasoning model ARN. Used by AgentCore agents for complex multi-step tasks."
+  description = "Primary reasoning model inference profile ID. Claude 4.x requires a cross-region inference profile (not the bare model ID) for on-demand throughput."
   type        = string
-  default     = "anthropic.claude-sonnet-4-6"
+  default     = "us.anthropic.claude-sonnet-4-6"
 }
 
 variable "model_arn_evaluation" {

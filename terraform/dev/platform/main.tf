@@ -72,6 +72,11 @@ resource "aws_iam_role" "agentcore_runtime" {
   tags = merge(local.common_tags, { Name = "${var.project_name}-agentcore-runtime-${var.environment}" })
 }
 
+resource "aws_iam_role_policy_attachment" "agentcore_runtime_managed" {
+  role       = aws_iam_role.agentcore_runtime.name
+  policy_arn = "arn:aws:iam::aws:policy/BedrockAgentCoreFullAccess"
+}
+
 resource "aws_iam_role_policy" "agentcore_runtime" {
   name = "${var.project_name}-agentcore-runtime-${var.environment}-policy"
   role = aws_iam_role.agentcore_runtime.id
@@ -80,21 +85,136 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid    = "ECRTokenAccess"
+        Effect = "Allow"
+        Action = ["ecr:GetAuthorizationToken"]
+        Resource = "*"
+      },
+      {
+        Sid    = "ECRPullImage"
+        Effect = "Allow"
+        Action = [
+          "ecr:BatchGetImage",
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchCheckLayerAvailability",
+        ]
+        Resource = "arn:aws:ecr:${var.aws_region}:${var.account_id}:repository/ai-platform-dev-hr-assistant"
+      },
+      {
         Sid    = "BedrockModelInvoke"
         Effect = "Allow"
-        Action = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
-        # Scoped to approved model ARNs only (CLAUDE.md / ADR-001).
+        Action = [
+          "bedrock:InvokeModel",
+          "bedrock:InvokeModelWithResponseStream",
+          "bedrock:ApplyGuardrail",
+        ]
+        # Claude 4.x models require cross-region inference profiles (us.* or global.*).
+        # IAM must allow both the inference profile ARN and the underlying foundation model.
         Resource = [
           "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-sonnet-4-6",
           "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-haiku-4-5-20251001",
           "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0",
+          "arn:aws:bedrock:${var.aws_region}:${var.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*::foundation-model/*",
+          "arn:aws:bedrock:${var.aws_region}:${var.account_id}:guardrail/*",
         ]
       },
       {
+        # Prompt Management: load system prompt text at container startup.
+        Sid    = "BedrockPromptRead"
+        Effect = "Allow"
+        Action = ["bedrock:GetPrompt"]
+        Resource = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:prompt/*"
+      },
+      {
+        # Knowledge Base: retrieve HR policy passages for context injection.
+        Sid    = "BedrockKBRetrieve"
+        Effect = "Allow"
+        Action = ["bedrock:Retrieve"]
+        Resource = "arn:aws:bedrock:${var.aws_region}:${var.account_id}:knowledge-base/*"
+      },
+      {
+        # AgentCore writes container logs to /aws/bedrock-agentcore/runtimes/* (service default).
         Sid    = "CloudWatchLogsWrite"
         Effect = "Allow"
-        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-        Resource = ["${local.agentcore_log_group_arn}:*"]
+        Action = [
+          "logs:DescribeLogGroups",
+          "logs:DescribeLogStreams",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*",
+          "${local.agentcore_log_group_arn}:*",
+        ]
+      },
+      {
+        # X-Ray tracing (required by AgentCore runtime per reference sample).
+        Sid    = "XRayTracing"
+        Effect = "Allow"
+        Action = [
+          "xray:PutTraceSegments",
+          "xray:PutTelemetryRecords",
+          "xray:GetSamplingRules",
+          "xray:GetSamplingTargets",
+        ]
+        Resource = "*"
+      },
+      {
+        # CloudWatch metrics (required by AgentCore runtime per reference sample).
+        Sid    = "CloudWatchMetrics"
+        Effect = "Allow"
+        Action = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+        Condition = {
+          StringEquals = { "cloudwatch:namespace" = "bedrock-agentcore" }
+        }
+      },
+      {
+        # Workload identity tokens — required for container to authenticate as AgentCore workload.
+        Sid    = "WorkloadIdentityTokens"
+        Effect = "Allow"
+        Action = [
+          "bedrock-agentcore:GetWorkloadAccessToken",
+          "bedrock-agentcore:GetWorkloadAccessTokenForJWT",
+          "bedrock-agentcore:GetWorkloadAccessTokenForUserId",
+        ]
+        Resource = [
+          "arn:aws:bedrock-agentcore:${var.aws_region}:${var.account_id}:workload-identity-directory/default",
+          "arn:aws:bedrock-agentcore:${var.aws_region}:${var.account_id}:workload-identity-directory/default/workload-identity/*",
+        ]
+      },
+      {
+        # DynamoDB: agent registry (read-only at startup) and session memory (read/write).
+        Sid    = "DynamoDBSessionAndRegistry"
+        Effect = "Allow"
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:UpdateItem",
+        ]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}",
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.session_memory_table_name}",
+        ]
+      },
+      {
+        # Lambda: invoke Glean stub MCP tool and Prompt Vault writer.
+        Sid    = "LambdaInvoke"
+        Effect = "Allow"
+        Action = ["lambda:InvokeFunction"]
+        Resource = [
+          "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ai-platform-dev-glean-stub",
+          "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:hr-assistant-prompt-vault-writer-dev",
+        ]
+      },
+      {
+        # KMS: decrypt DynamoDB and S3 data encrypted with the platform KMS key.
+        Sid    = "KMSDecrypt"
+        Effect = "Allow"
+        Action = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [data.terraform_remote_state.foundation.outputs.storage_kms_key_arn]
       },
       {
         # Gateway target management — tools/ layers register their targets against

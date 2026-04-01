@@ -41,15 +41,51 @@ resource "aws_security_group" "agentcore" {
   tags        = merge(var.tags, { Name = "${var.name_prefix}-agentcore-sg" })
 }
 
-resource "aws_security_group_rule" "agentcore_egress_https" {
+# Interface VPC endpoint ENIs are in the VPC CIDR. Egress to VPC CIDR covers all
+# interface endpoints (bedrock-runtime, ecr.api, ecr.dkr, bedrock-agent, lambda, logs).
+resource "aws_security_group_rule" "agentcore_egress_https_vpc" {
   type              = "egress"
   from_port         = 443
   to_port           = 443
   protocol          = "tcp"
-  # Scoped to VPC CIDR - traffic reaches AWS services via VPC endpoints, not internet.
   cidr_blocks       = [var.vpc_cidr]
   security_group_id = aws_security_group.agentcore.id
-  description       = "HTTPS egress to VPC CIDR for VPC endpoint traffic."
+  description       = "HTTPS egress to VPC CIDR - covers all interface VPC endpoints."
+}
+
+# S3 Gateway endpoint: security groups evaluate before route-table gateway routing,
+# so traffic to S3 public IPs must be explicitly allowed (they are outside VPC CIDR).
+resource "aws_security_group_rule" "agentcore_egress_https_s3" {
+  type              = "egress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  prefix_list_ids   = [aws_vpc_endpoint.s3.prefix_list_id]
+  security_group_id = aws_security_group.agentcore.id
+  description       = "HTTPS egress to S3 prefix list - required for ECR layer downloads via gateway endpoint."
+}
+
+# DynamoDB Gateway endpoint: same reason as S3 above.
+resource "aws_security_group_rule" "agentcore_egress_https_dynamodb" {
+  type              = "egress"
+  from_port         = 443
+  to_port           = 443
+  protocol          = "tcp"
+  prefix_list_ids   = [aws_vpc_endpoint.dynamodb.prefix_list_id]
+  security_group_id = aws_security_group.agentcore.id
+  description       = "HTTPS egress to DynamoDB prefix list - required for session memory and agent registry."
+}
+
+# Interface VPC endpoint ENIs share this security group. Without a self-referencing
+# inbound rule, containers using this SG cannot reach any interface endpoint ENI.
+resource "aws_security_group_rule" "agentcore_ingress_https_self" {
+  type                     = "ingress"
+  from_port                = 443
+  to_port                  = 443
+  protocol                 = "tcp"
+  self                     = true
+  security_group_id        = aws_security_group.agentcore.id
+  description              = "HTTPS ingress from same SG - required for container-to-endpoint traffic."
 }
 
 # ---------------------------------------------------------------------------
@@ -92,5 +128,61 @@ resource "aws_vpc_endpoint" "cloudwatch_logs" {
   security_group_ids  = [aws_security_group.agentcore.id]
   private_dns_enabled = true
   tags                = merge(var.tags, { Name = "${var.name_prefix}-logs-endpoint" })
+}
+
+# bedrock-agent: Bedrock Prompt Management (get_prompt) and agent control plane.
+resource "aws_vpc_endpoint" "bedrock_agent" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-agent"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-bedrock-agent-endpoint" })
+}
+
+# bedrock-agent-runtime: Knowledge Base retrieve() calls from the agent container.
+resource "aws_vpc_endpoint" "bedrock_agent_runtime" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-agent-runtime"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-bedrock-agent-runtime-endpoint" })
+}
+
+# lambda: required for agent container to invoke Glean stub and Prompt Vault Lambda.
+resource "aws_vpc_endpoint" "lambda" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.lambda"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-lambda-endpoint" })
+}
+
+# ecr.api: ECR control plane (GetAuthorizationToken). Required by AgentCore to pull
+# container images from ECR when the runtime runs in private subnets.
+resource "aws_vpc_endpoint" "ecr_api" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.ecr.api"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-ecr-api-endpoint" })
+}
+
+# ecr.dkr: ECR Docker registry (image layer pull). Required alongside ecr.api.
+resource "aws_vpc_endpoint" "ecr_dkr" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.ecr.dkr"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-ecr-dkr-endpoint" })
 }
 
