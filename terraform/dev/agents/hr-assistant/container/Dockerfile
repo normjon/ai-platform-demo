@@ -40,4 +40,4 @@ EXPOSE 8080
 RUN useradd -m -u 1000 agent
 USER agent
 
-CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-config", "/dev/null"]
+CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--no-access-log", "--log-level", "warning"]
