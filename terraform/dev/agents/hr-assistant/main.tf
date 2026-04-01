@@ -10,11 +10,27 @@ terraform {
       source  = "hashicorp/archive"
       version = "~> 2.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
 provider "aws" {
   region = var.aws_region
+}
+
+# Current caller identity and session context — used to grant index-creation
+# access in OpenSearch Serverless data access policy so null_resource local-exec
+# can create the vector index before Bedrock KB is provisioned.
+# aws_iam_session_context derives the IAM role ARN (with path) from the session
+# ARN, which is stable across SSO refreshes. Using the session ARN directly in
+# AOSS data access policies fails when the SSO token is refreshed (new session).
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
 }
 
 # ---------------------------------------------------------------------------
@@ -245,6 +261,7 @@ resource "terraform_data" "hr_assistant_manifest" {
     data.terraform_remote_state.platform.outputs.agentcore_endpoint_id,
     data.terraform_remote_state.platform.outputs.agentcore_gateway_id,
     var.model_arn,
+    aws_bedrockagent_knowledge_base.hr_policies.id,
   ]
 
   provisioner "local-exec" {
@@ -270,6 +287,7 @@ resource "terraform_data" "hr_assistant_manifest" {
           "response_latency_p95_ms": {"N": "5000"},
           "monthly_usd_limit": {"N": "50"},
           "alert_threshold_pct": {"N": "80"},
+          "knowledge_base_id": {"S": "${aws_bedrockagent_knowledge_base.hr_policies.id}"},
           "environment":     {"S": "${var.environment}"},
           "registered_at":   {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
         }'
@@ -396,4 +414,350 @@ resource "aws_lambda_permission" "agentcore_invoke_prompt_vault_writer" {
   function_name = aws_lambda_function.prompt_vault_writer.function_name
   principal     = "bedrock-agentcore.amazonaws.com"
   source_arn    = "arn:aws:bedrock-agentcore:${var.aws_region}:${var.account_id}:*"
+}
+
+# ---------------------------------------------------------------------------
+# Component 3 — HR Policies Knowledge Base
+#
+# Architecture: OpenSearch Serverless (vector engine) + Bedrock Knowledge Base.
+# Scoped to agents/hr-assistant layer per Option B — the HR Policies KB is
+# specific to this agent and is not a shared platform resource.
+# IAM role created inline (not in platform), scoped to hr-policies/ S3 prefix
+# and this specific OpenSearch Serverless collection.
+# ---------------------------------------------------------------------------
+
+locals {
+  kb_collection_name = "hr-policies-kb-dev"
+  kb_index_name      = "hr-policies-index"
+  # S3 prefix under the document landing bucket where HR policy docs live.
+  hr_policies_s3_prefix = "hr-policies/"
+  document_landing_bucket = "ai-platform-dev-document-landing-${var.account_id}"
+}
+
+# ---------------------------------------------------------------------------
+# OpenSearch Serverless — encryption, network, and data access policies.
+# Public network access is required because Bedrock is a managed service that
+# accesses OpenSearch from outside the customer VPC. Data access is restricted
+# to the KB IAM role via the data access policy.
+# ---------------------------------------------------------------------------
+
+resource "aws_opensearchserverless_security_policy" "hr_policies_encryption" {
+  name        = "hr-policies-enc-dev"
+  type        = "encryption"
+  description = "AWS-managed encryption for HR Policies KB collection."
+  policy = jsonencode({
+    Rules = [{
+      ResourceType = "collection"
+      Resource     = ["collection/${local.kb_collection_name}"]
+    }]
+    AWSOwnedKey = true
+  })
+}
+
+resource "aws_opensearchserverless_security_policy" "hr_policies_network" {
+  name        = "hr-policies-net-dev"
+  type        = "network"
+  description = "Public endpoint access for HR Policies KB collection."
+  policy = jsonencode([{
+    Rules = [
+      {
+        ResourceType = "collection"
+        Resource     = ["collection/${local.kb_collection_name}"]
+      },
+      {
+        ResourceType = "dashboard"
+        Resource     = ["collection/${local.kb_collection_name}"]
+      }
+    ]
+    AllowFromPublic = true
+  }])
+}
+
+resource "aws_opensearchserverless_access_policy" "hr_policies_data" {
+  name        = "hr-policies-data-dev"
+  type        = "data"
+  description = "Allow Bedrock KB role to manage hr-policies index and documents."
+  policy = jsonencode([{
+    Rules = [
+      {
+        ResourceType = "collection"
+        Resource     = ["collection/${local.kb_collection_name}"]
+        Permission   = [
+          "aoss:CreateCollectionItems",
+          "aoss:DeleteCollectionItems",
+          "aoss:UpdateCollectionItems",
+          "aoss:DescribeCollectionItems",
+        ]
+      },
+      {
+        ResourceType = "index"
+        Resource     = ["index/${local.kb_collection_name}/*"]
+        Permission   = [
+          "aoss:CreateIndex",
+          "aoss:DeleteIndex",
+          "aoss:UpdateIndex",
+          "aoss:DescribeIndex",
+          "aoss:ReadDocument",
+          "aoss:WriteDocument",
+        ]
+      }
+    ]
+    # Include the KB service role AND the Terraform caller's IAM role so
+    # null_resource local-exec can create the vector index before Bedrock KB
+    # is provisioned. The role ARN (not session ARN) is used so the policy
+    # remains valid across SSO token refreshes.
+    Principal = [
+      aws_iam_role.hr_policies_kb.arn,
+      data.aws_iam_session_context.current.issuer_arn,
+    ]
+  }])
+}
+
+resource "aws_opensearchserverless_collection" "hr_policies" {
+  name        = local.kb_collection_name
+  description = "Vector store for HR Policies Knowledge Base."
+  type        = "VECTORSEARCH"
+
+  depends_on = [
+    aws_opensearchserverless_security_policy.hr_policies_encryption,
+    aws_opensearchserverless_security_policy.hr_policies_network,
+    aws_opensearchserverless_access_policy.hr_policies_data,
+  ]
+
+  tags = merge(var.tags, { Component = "hr-policies-kb" })
+}
+
+# ---------------------------------------------------------------------------
+# IAM role for the HR Policies Knowledge Base (Option B: inline in this layer).
+# Separate from the platform bedrock_kb role — scoped to hr-policies/ prefix
+# and this specific OpenSearch Serverless collection.
+# ---------------------------------------------------------------------------
+
+resource "aws_iam_role" "hr_policies_kb" {
+  name        = "hr-policies-kb-role-dev"
+  description = "Bedrock KB service role for HR Policies KB. Scoped to hr-policies/ S3 prefix and OpenSearch Serverless collection."
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "BedrockKBAssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "bedrock.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+      Condition = { StringEquals = { "aws:SourceAccount" = var.account_id } }
+    }]
+  })
+
+  tags = merge(var.tags, { Component = "hr-policies-kb-iam" })
+}
+
+resource "aws_iam_role_policy" "hr_policies_kb" {
+  name = "HRPoliciesKBPolicy"
+  role = aws_iam_role.hr_policies_kb.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # S3: read HR policy documents from the document landing bucket.
+        Sid    = "S3HRPoliciesRead"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${local.document_landing_bucket}",
+          "arn:aws:s3:::${local.document_landing_bucket}/hr-policies/*",
+        ]
+      },
+      {
+        # OpenSearch Serverless: write embeddings to the vector index.
+        Sid    = "OpenSearchServerlessAccess"
+        Effect = "Allow"
+        Action = ["aoss:APIAccessAll"]
+        Resource = ["arn:aws:aoss:${var.aws_region}:${var.account_id}:collection/*"]
+      },
+      {
+        # Bedrock: invoke embedding model to generate vectors.
+        Sid    = "BedrockEmbeddingModel"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+        ]
+      },
+      {
+        # KMS: decrypt S3 objects in the document landing bucket, which is
+        # encrypted with the platform KMS key. Without this, the KB role
+        # receives AccessDenied when reading documents during ingestion.
+        Sid    = "KMSDecrypt"
+        Effect = "Allow"
+        Action = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [data.terraform_remote_state.platform.outputs.kms_key_arn]
+      },
+    ]
+  })
+}
+
+# ---------------------------------------------------------------------------
+# OpenSearch vector index pre-creation.
+#
+# Bedrock KB does not auto-create the vector index — it expects the index to
+# exist before the knowledge base resource is provisioned. This null_resource
+# runs create-os-index.py via local-exec after the collection is ACTIVE and
+# the data access policy (which includes the Terraform caller ARN) is applied.
+#
+# The script is idempotent: it exits 0 if the index already exists.
+# ---------------------------------------------------------------------------
+
+resource "null_resource" "create_hr_policies_index" {
+  # Re-run if the collection is replaced.
+  triggers = {
+    collection_id = aws_opensearchserverless_collection.hr_policies.id
+  }
+
+  provisioner "local-exec" {
+    # Sleep 60s to allow the AOSS data access policy to propagate before the
+    # index creation request. AOSS data access policies have eventual consistency.
+    # uv run creates an ephemeral venv — does not modify system Python.
+    command = "sleep 60 && uv run --with boto3 --with opensearch-py python3 ${path.module}/scripts/create-os-index.py ${aws_opensearchserverless_collection.hr_policies.collection_endpoint} ${var.aws_region}"
+  }
+
+  depends_on = [
+    aws_opensearchserverless_collection.hr_policies,
+    aws_opensearchserverless_access_policy.hr_policies_data,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# Bedrock Knowledge Base
+# ---------------------------------------------------------------------------
+
+resource "aws_bedrockagent_knowledge_base" "hr_policies" {
+  name        = "hr-policies-kb-dev"
+  description = "HR policy documents for the HR Assistant agent. Dev environment placeholder documents."
+  role_arn    = aws_iam_role.hr_policies_kb.arn
+
+  knowledge_base_configuration {
+    type = "VECTOR"
+    vector_knowledge_base_configuration {
+      embedding_model_arn = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+    }
+  }
+
+  storage_configuration {
+    type = "OPENSEARCH_SERVERLESS"
+    opensearch_serverless_configuration {
+      collection_arn    = aws_opensearchserverless_collection.hr_policies.arn
+      vector_index_name = local.kb_index_name
+      field_mapping {
+        vector_field   = "embedding"
+        text_field     = "text"
+        metadata_field = "metadata"
+      }
+    }
+  }
+
+  tags = merge(var.tags, { Component = "hr-policies-kb" })
+
+  depends_on = [
+    aws_iam_role_policy.hr_policies_kb,
+    aws_opensearchserverless_access_policy.hr_policies_data,
+    null_resource.create_hr_policies_index,
+  ]
+}
+
+# ---------------------------------------------------------------------------
+# Knowledge Base data source — reads from hr-policies/ prefix in the
+# document landing S3 bucket (provisioned by the platform layer).
+# ---------------------------------------------------------------------------
+
+resource "aws_bedrockagent_data_source" "hr_policies" {
+  knowledge_base_id = aws_bedrockagent_knowledge_base.hr_policies.id
+  name              = "hr-policies-s3-source"
+  description       = "HR policy documents in the platform document landing bucket."
+
+  data_source_configuration {
+    type = "S3"
+    s3_configuration {
+      bucket_arn         = "arn:aws:s3:::${local.document_landing_bucket}"
+      inclusion_prefixes = ["hr-policies/"]
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Sample HR policy documents — upload to S3 for dev KB testing.
+# These are dev placeholders. Production documents ingest via the Glue/Macie
+# pipeline (Phase 3). Content is consistent with smoke test golden dataset.
+# ---------------------------------------------------------------------------
+
+resource "aws_s3_object" "hr_doc_annual_leave" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/annual-leave-policy.md"
+  source       = "${path.module}/kb-docs/annual-leave-policy.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/annual-leave-policy.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_sick_leave" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/sick-leave-policy.md"
+  source       = "${path.module}/kb-docs/sick-leave-policy.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/sick-leave-policy.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_parental_leave" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/parental-leave-policy.md"
+  source       = "${path.module}/kb-docs/parental-leave-policy.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/parental-leave-policy.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_remote_working" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/remote-working-policy.md"
+  source       = "${path.module}/kb-docs/remote-working-policy.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/remote-working-policy.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_expenses" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/expenses-policy.md"
+  source       = "${path.module}/kb-docs/expenses-policy.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/expenses-policy.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_performance_review" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/performance-review-process.md"
+  source       = "${path.module}/kb-docs/performance-review-process.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/performance-review-process.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_eap" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/employee-assistance-programme.md"
+  source       = "${path.module}/kb-docs/employee-assistance-programme.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/employee-assistance-programme.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
+}
+
+resource "aws_s3_object" "hr_doc_benefits" {
+  bucket       = local.document_landing_bucket
+  key          = "hr-policies/benefits-enrolment-guide.md"
+  source       = "${path.module}/kb-docs/benefits-enrolment-guide.md"
+  content_type = "text/markdown"
+  etag         = filemd5("${path.module}/kb-docs/benefits-enrolment-guide.md")
+  tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
 }
