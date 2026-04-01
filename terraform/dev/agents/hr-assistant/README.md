@@ -287,6 +287,36 @@ aws logs filter-log-events \
 
 ---
 
+## Known Issues
+
+**Agent registry item not removed on destroy**
+
+`terraform destroy` in this layer does not delete the `hr-assistant-dev` item from the
+`ai-platform-dev-agent-registry` DynamoDB table. The `terraform_data + local-exec` block
+has no `when = destroy` provisioner. The item persists in the table after destroy.
+
+This does not block re-standup — `terraform apply` overwrites the item via `put-item`
+(idempotent). To remove the item manually after destroy:
+
+```bash
+aws dynamodb delete-item \
+  --region us-east-2 \
+  --table-name ai-platform-dev-agent-registry \
+  --key '{"agent_id": {"S": "hr-assistant-dev"}}'
+```
+
+**Prompt Vault S3 objects not removed on destroy**
+
+Smoke test runs and any live invocations write objects to the Prompt Vault bucket
+(`ai-platform-dev-prompt-vault-096305373014`) under `prompt-vault/hr-assistant/`.
+This bucket is owned by the platform layer and not managed by this layer's destroy.
+
+If the platform layer is subsequently destroyed, the S3 bucket versioning will
+prevent `terraform destroy` from completing. Purge the objects first — see
+the purge script in `terraform/dev/platform/README.md` (Destroy section).
+
+---
+
 ## Phase 1 Known Limitations
 
 | Limitation | Notes |
