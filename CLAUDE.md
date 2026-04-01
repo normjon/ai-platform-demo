@@ -27,7 +27,23 @@ the four-phase rollout roadmap. When in doubt about what to build
 or how to configure it, the architecture document is the source
 of truth.
 
-### 2 — ADR Library
+### 2 — Layer README files
+Every Terraform layer has a README.md. Read the README.md of any
+layer you are working in or depending on before making changes.
+READMEs document current state, known issues, prerequisites, and
+operational nuances that are not derivable from the Terraform code
+alone. Failing to read the README before acting has caused wasted
+work in this project (e.g. attempting platform operations without
+understanding the S3 purge requirement or the container image
+prerequisite).
+
+Layer READMEs:
+- terraform/dev/foundation/README.md
+- terraform/dev/platform/README.md
+- terraform/dev/tools/glean/README.md
+- terraform/dev/agents/hr-assistant/README.md
+
+### 3 — ADR Library
 Repository: https://github.com/normjon/claude-foundation-best-practice
 Read the relevant domain folder CLAUDE.md before writing any code.
 Domain routing:
