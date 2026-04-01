@@ -6,6 +6,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
   }
 }
 
@@ -272,4 +276,124 @@ resource "terraform_data" "hr_assistant_manifest" {
       echo 'Agent manifest registered successfully.'
     SCRIPT
   }
+}
+
+# ---------------------------------------------------------------------------
+# Component 4 — Prompt Vault Lambda Write Path
+# ---------------------------------------------------------------------------
+
+# Package the Lambda handler from the local prompt-vault/ directory.
+data "archive_file" "prompt_vault_writer" {
+  type        = "zip"
+  source_file = "${path.module}/prompt-vault/handler.py"
+  output_path = "${path.module}/prompt-vault/handler.zip"
+}
+
+# IAM execution role for the Prompt Vault writer — inline in agents/hr-assistant
+# per Option B (ADR-017). Platform does not own Lambda IAM for agent layers.
+resource "aws_iam_role" "prompt_vault_writer" {
+  name        = "hr-assistant-prompt-vault-writer-dev"
+  description = "Execution role for the HR Assistant Prompt Vault writer Lambda."
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "LambdaAssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+
+  tags = merge(var.tags, { Component = "prompt-vault-iam" })
+}
+
+resource "aws_iam_role_policy" "prompt_vault_writer" {
+  name = "PromptVaultWriterPolicy"
+  role = aws_iam_role.prompt_vault_writer.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      # S3 write to Prompt Vault — scoped to hr-assistant prefix only
+      {
+        Sid    = "PromptVaultWrite"
+        Effect = "Allow"
+        Action = ["s3:PutObject"]
+        Resource = [
+          "arn:aws:s3:::${data.terraform_remote_state.platform.outputs.prompt_vault_bucket}/prompt-vault/hr-assistant/*"
+        ]
+      },
+      # KMS — required to write to the KMS-encrypted Prompt Vault bucket.
+      # Without these actions the Lambda receives AccessDenied at runtime,
+      # not at plan time. The failure is silent until first invocation.
+      {
+        Sid    = "PromptVaultKMS"
+        Effect = "Allow"
+        Action = ["kms:GenerateDataKey", "kms:Decrypt"]
+        Resource = [data.terraform_remote_state.platform.outputs.kms_key_arn]
+      },
+      # CloudWatch Logs — scoped to this Lambda's log group only
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = [
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/hr-assistant-prompt-vault-writer-dev:*"
+        ]
+      }
+    ]
+  })
+}
+
+# CloudWatch log group — provisioned explicitly for 30-day retention.
+resource "aws_cloudwatch_log_group" "prompt_vault_writer" {
+  name              = "/aws/lambda/hr-assistant-prompt-vault-writer-dev"
+  retention_in_days = 30
+  kms_key_id        = data.terraform_remote_state.platform.outputs.kms_key_arn
+
+  tags = merge(var.tags, { Component = "prompt-vault-logs" })
+}
+
+# Lambda function — arm64/Graviton, python3.12 (ADR-004)
+resource "aws_lambda_function" "prompt_vault_writer" {
+  function_name    = "hr-assistant-prompt-vault-writer-dev"
+  description      = "Writes HR Assistant interaction records to the Prompt Vault S3 bucket."
+  role             = aws_iam_role.prompt_vault_writer.arn
+  handler          = "handler.handler"
+  runtime          = "python3.12"
+  architectures    = ["arm64"]
+  timeout          = 30
+  filename         = data.archive_file.prompt_vault_writer.output_path
+  source_code_hash = data.archive_file.prompt_vault_writer.output_base64sha256
+
+  environment {
+    variables = {
+      PROMPT_VAULT_BUCKET = data.terraform_remote_state.platform.outputs.prompt_vault_bucket
+      AGENT_ID            = "hr-assistant-dev"
+      ENVIRONMENT         = var.environment
+    }
+  }
+
+  depends_on = [
+    aws_iam_role_policy.prompt_vault_writer,
+    aws_cloudwatch_log_group.prompt_vault_writer,
+  ]
+
+  tags = merge(var.tags, { Component = "prompt-vault-lambda" })
+}
+
+# Allow AgentCore to invoke the Prompt Vault writer.
+resource "aws_lambda_permission" "agentcore_invoke_prompt_vault_writer" {
+  statement_id  = "AllowAgentCoreInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.prompt_vault_writer.function_name
+  principal     = "bedrock-agentcore.amazonaws.com"
+  source_arn    = "arn:aws:bedrock-agentcore:${var.aws_region}:${var.account_id}:*"
 }
