@@ -25,3 +25,13 @@ variable "project_name" {
   type        = string
   default     = "ai-platform"
 }
+
+variable "tags" {
+  description = "Map of tags to apply to all resources in this layer."
+  type        = map(string)
+  default = {
+    Project   = "ai-platform"
+    ManagedBy = "terraform"
+    Layer     = "agents/hr-assistant"
+  }
+}

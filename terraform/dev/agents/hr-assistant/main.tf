@@ -27,20 +27,29 @@ data "terraform_remote_state" "platform" {
 }
 
 # ---------------------------------------------------------------------------
-# HR Assistant agent — placeholder layer.
-#
-# The HR Assistant AgentCore runtime is currently managed by the platform/
-# layer as the sole runtime endpoint. This layer is reserved for agent-
-# specific configuration that the HR Assistant team owns independently:
-#
-#   - Agent manifest and prompt templates (Prompt Vault references)
-#   - Knowledge Base configuration (when Bedrock KB is in scope)
-#   - Agent-specific IAM grants (e.g. access to specific S3 prefixes)
-#   - Agent test harness configuration
-#
-# When the platform team separates per-agent runtimes from the shared
-# platform runtime, the AgentCore runtime resource and its IAM role will
-# move here.
-#
-# No resources are deployed from this layer yet.
+# Component 1 — System Prompt (Bedrock Prompt Management)
 # ---------------------------------------------------------------------------
+
+resource "aws_bedrock_prompt" "hr_assistant_system" {
+  name        = "hr-assistant-system-prompt-dev"
+  description = "System prompt for the HR Assistant agent - dev environment."
+
+  default_variant = "default"
+
+  variant {
+    name          = "default"
+    template_type = "TEXT"
+    template_configuration {
+      text {
+        text = file("${path.module}/prompts/hr-assistant-system-prompt.txt")
+      }
+    }
+  }
+
+  tags = merge(var.tags, { Component = "system-prompt" })
+}
+
+resource "aws_bedrock_prompt_version" "hr_assistant_system" {
+  prompt_arn  = aws_bedrock_prompt.hr_assistant_system.arn
+  description = "Phase 1 baseline — dev environment."
+}
