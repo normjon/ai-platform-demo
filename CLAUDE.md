@@ -195,7 +195,7 @@ multi-account production topology described in the architecture
 document. Build only what is listed here. Do not provision
 staging or production resources.
 
-### In scope for dev (Phase 1):
+### In scope for dev (Phase 1 + Phase 2 complete):
 - Single AWS account with Bedrock enabled in us-east-2
 - VPC with private subnets and PrivateLink endpoints
   for Bedrock and AgentCore
@@ -203,15 +203,15 @@ staging or production resources.
 - KMS key for encryption
 - One AgentCore endpoint (internal, dev configuration)
 - MCP Gateway with stubbed Glean Search Lambda tool
-- One test agent (HR Assistant)
+- One agent (HR Assistant) — arm64 container, live invocations
 - DynamoDB tables for session memory and agent registry
 - S3 bucket for Prompt Vault
 - CloudWatch log groups and basic alarms
+- HR Policies Knowledge Base (OpenSearch Serverless + Bedrock KB)
+- 8 HR policy documents in document landing S3 bucket
 
-### Deferred to Phase 2 (do not provision now):
-- Bedrock Knowledge Base and OpenSearch Serverless collection
-- Real Glean MCP endpoint (stub Lambda used in Phase 1)
-- Document landing S3 bucket and ingestion pipeline
+### Deferred (do not provision):
+- Real Glean MCP endpoint (stub Lambda used in dev)
 - Multi-account AWS Organizations structure
 - Production or staging AgentCore endpoints
 - External production WAF and Cognito user pool
@@ -435,6 +435,27 @@ All Bedrock and AgentCore resources must be provisioned in us-east-2.
 Never hardcode model ARNs in module code. Reference them through
 the variables defined in variables.tf.
 
+**Claude 4.x cross-region inference profile requirement:**
+Claude 4.x models (claude-sonnet-4-6, claude-opus-4-6) require the
+cross-region inference profile prefix for on-demand throughput. Using
+the bare model ID causes:
+  `"Invocation of model ID anthropic.claude-sonnet-4-6 with on-demand
+   throughput isn't supported"`
+
+Use the `us.*` prefixed inference profile everywhere — variables.tf
+defaults, DynamoDB manifest items, and application code:
+
+  Correct:   us.anthropic.claude-sonnet-4-6
+  Incorrect: anthropic.claude-sonnet-4-6
+
+The IAM `bedrock:InvokeModel` resource list must include BOTH:
+  arn:aws:bedrock:REGION:ACCOUNT:inference-profile/*
+  arn:aws:bedrock:*::foundation-model/*
+
+The `inference-profile/*` ARN is required for `us.*` prefix model IDs.
+Without it, the runtime receives `AccessDeniedException` even when
+`InvokeModel` is otherwise allowed.
+
 ---
 
 ## ARM64 / Graviton Requirement
@@ -457,6 +478,145 @@ uv pip install \
 Never omit --only-binary=:all: — it is required for cross-platform
 binary compatibility. Never build dependencies on an x86 machine
 without this flag and expect them to run on Graviton.
+
+**uvicorn log-config pitfall:**
+Do NOT pass `--log-config /dev/null` to uvicorn in the container CMD.
+uvicorn 0.32.1 calls `logging.config.fileConfig()` on the provided path.
+`/dev/null` is an empty file; `fileConfig()` raises:
+  `RuntimeError: /dev/null is an empty file`
+The container crashes at startup with no useful log output.
+Use `--no-access-log --log-level warning` instead.
+
+**ECR authentication order:**
+When building images that pull from public.ecr.aws and push to a private
+ECR registry, authenticate to public ECR first (`--region us-east-1`),
+then authenticate to private ECR (`--region us-east-2`). Docker credential
+helpers can override each other — the private ECR auth must be the final
+state so the push succeeds.
+
+---
+
+## AgentCore Runtime Operational Requirements
+
+These rules apply to every agent layer that provisions an AgentCore runtime
+or invokes a container via AgentCore. They were learned during Phase 2
+debugging — skipping any of them causes non-obvious failures.
+
+### VPC endpoints and security group egress
+
+The following interface VPC endpoints must exist for AgentCore containers
+to start and operate. Missing any one causes `i/o timeout` at startup
+or at first tool invocation — not a startup error:
+
+| Endpoint | Reason |
+|---|---|
+| `ecr.api` | Container image manifest pull |
+| `ecr.dkr` | Container image layer download |
+| `bedrock-agent` | KB retrieval API |
+| `bedrock-agent-runtime` | KB retrieve operation at runtime |
+| `lambda` | Agent invokes tool Lambdas |
+| `s3` (gateway type) | S3 layer downloads during image pull |
+| `dynamodb` (gateway type) | Session memory and agent registry |
+
+**Critical:** Security groups evaluate BEFORE gateway endpoint routing.
+Egress rules that cover only the VPC CIDR (e.g. `10.0.0.0/16`) silently
+block traffic to S3 and DynamoDB even when gateway endpoints exist.
+The AgentCore security group MUST use AWS-managed **prefix lists** for
+S3 and DynamoDB egress — not CIDR blocks.
+
+Also required: a self-referencing HTTPS ingress rule so the container
+can reach interface endpoint ENIs that share the same security group.
+
+Container image pull failures (`dial tcp 3.x.x.x:443: i/o timeout`) are
+the symptom of missing prefix-list egress rules.
+
+### AgentCore runtime ARN format
+
+```
+arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/<runtime-id>
+```
+
+NOT `agent-runtime` — that path returns `ResourceNotFoundException`.
+Confirm the correct ARN:
+
+```bash
+aws bedrock-agentcore-control get-agent-runtime \
+  --agent-runtime-id "<runtime-id>" \
+  --region us-east-2 \
+  --query 'agentRuntimeArn' --output text
+```
+
+### sessionId must be in the payload body
+
+`--runtime-session-id` is used by the AgentCore control plane for routing
+and billing tracking. It is NOT forwarded to the container as the
+`X-Amzn-Bedrock-AgentCore-Session-Id` header.
+
+Always include `sessionId` in the JSON payload body:
+
+```bash
+PAYLOAD=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({
+    'prompt': 'your question',
+    'sessionId': '${SESSION_ID}'
+}).encode()).decode())")
+```
+
+Using unique `sessionId` values per invocation is mandatory for session
+isolation. Reusing a session ID that has corrupt history (incomplete
+`tool_use`/`tool_result` pairs from a failed invocation) causes:
+  `Expected toolResult blocks at messages.X.content`
+
+### CloudWatch log group path
+
+```
+/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT
+```
+
+NOT `/aws/agentcore/<name>` — that path does not exist. When debugging
+502 errors or unexpected container behaviour, check this log group first.
+
+### OpenSearch Serverless (AOSS) for Knowledge Bases
+
+When provisioning a Bedrock Knowledge Base backed by AOSS:
+
+1. **Vector index must pre-exist.** Bedrock KB does not auto-create the
+   OpenSearch vector index. Apply order:
+   ```
+   AOSS security policies → AOSS access policy → AOSS collection (9 min)
+     → null_resource (60s sleep + create-os-index.py)
+       → aws_bedrockagent_knowledge_base
+         → aws_bedrockagent_data_source
+   ```
+
+2. **AOSS data access policy propagation takes ~60 seconds.** Running
+   the index creation script immediately after the policy is applied
+   results in `403 Forbidden` even when the policy is correct. Include
+   `sleep 60` before the script in local-exec.
+
+3. **Use the stable IAM role ARN, not the STS session ARN.**
+   Use `data.aws_iam_session_context.current.issuer_arn` for AOSS data
+   access policy principals — NOT `data.aws_caller_identity.current.arn`.
+   The SSO session ARN changes every time the token refreshes, causing
+   the data access policy match to fail after refresh.
+
+4. **KB IAM role requires KMS Decrypt.**
+   If the document landing S3 bucket is KMS-encrypted, the KB service
+   role must have `kms:Decrypt` and `kms:GenerateDataKey` for the KMS
+   key. Without it, ingestion reports COMPLETE with all documents failed:
+   `User: .../kb-role/DocumentLoaderTask-... is not authorized: kms:Decrypt`
+
+5. **Use opensearch-py with AWSV4SignerAuth for AOSS API calls.**
+   Raw botocore SigV4 signing against AOSS is fragile. Use:
+   ```python
+   from opensearchpy import AWSV4SignerAuth, OpenSearch, RequestsHttpConnection
+   auth = AWSV4SignerAuth(boto3.Session().get_credentials(), region, "aoss")
+   ```
+
+6. **Run local-exec Python scripts via `uv run --with <pkg>` pattern.**
+   This avoids system Python pollution without requiring a virtualenv:
+   ```
+   uv run --with boto3 --with opensearch-py python3 scripts/create-os-index.py
+   ```
 
 ---
 
