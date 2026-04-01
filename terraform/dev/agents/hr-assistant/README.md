@@ -434,6 +434,154 @@ payload JSON to control session isolation.
 
 ---
 
+## Troubleshooting Guide
+
+Each entry maps a symptom to the root cause and fix. These were all encountered
+during Phase 2 build — the agent CLAUDE.md has the full diagnostic context.
+
+---
+
+### Container 502 / `RuntimeClientError` on invocation
+
+**Check CloudWatch first** — log group: `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT`
+
+| Symptom in logs | Root cause | Fix |
+|---|---|---|
+| No logs at all after invocation | Container failed to start — missing VPC endpoint or SG rule | Add missing endpoint; fix SG (see below) |
+| `dial tcp 3.x.x.x:443: i/o timeout` | Missing VPC endpoint or SG blocking traffic to S3/ECR | Add prefix-list egress rules to AgentCore SG (not VPC CIDR) |
+| `AccessDeniedException` | IAM role missing permission | Compare failing action against platform pre-flight checklist |
+| `RuntimeError: /dev/null is an empty file` | uvicorn `--log-config /dev/null` in container CMD | Rebuild container using `--no-access-log --log-level warning` |
+| `Invocation of model ID ... with on-demand throughput isn't supported` | Bare model ID (`anthropic.claude-sonnet-4-6`) | Change to `us.anthropic.claude-sonnet-4-6` everywhere + rebuild |
+| `Expected toolResult blocks at messages.X.content` | Corrupt session history in DynamoDB | Use a fresh session ID — do not reuse the failing session |
+| 502 with no CloudWatch logs AND container starts | `BedrockAgentCoreFullAccess` managed policy missing from runtime IAM role | Add `BedrockAgentCoreFullAccess` to agentcore_runtime role in platform layer |
+
+---
+
+### SG silently blocking S3 / DynamoDB traffic
+
+Security groups evaluate BEFORE gateway endpoint routing. An egress rule
+covering only the VPC CIDR (`10.0.0.0/16`) will silently block S3 and
+DynamoDB traffic even when gateway endpoints are attached. The container
+will time out on ECR image layer downloads or DynamoDB session reads.
+
+**Symptom:** `dial tcp 3.x.x.x:443: i/o timeout` in container logs.
+
+**Fix:** AgentCore security group egress rules must use AWS-managed
+prefix lists (`pl-xxxxxxxxx`) for S3 and DynamoDB — not CIDR blocks.
+Get the prefix list IDs:
+
+```bash
+aws ec2 describe-managed-prefix-lists \
+  --region us-east-2 \
+  --query "PrefixLists[?contains(PrefixListName,'s3') || contains(PrefixListName,'dynamodb')].[PrefixListName,PrefixListId]" \
+  --output text
+```
+
+---
+
+### AOSS index creation returns `403 Forbidden`
+
+Two independent causes — check both:
+
+**Cause 1 — STS session ARN in data access policy principal:**
+If the AOSS data access policy was created with `data.aws_caller_identity.current.arn`,
+that ARN contains the STS session ID (`assumed-role/ROLE/SESSION`). This changes every
+time the SSO token refreshes. After a refresh, the policy match fails.
+
+Fix: Re-apply after changing the principal to `data.aws_iam_session_context.current.issuer_arn`,
+which returns the stable IAM role ARN.
+
+**Cause 2 — Policy not yet propagated:**
+AOSS data access policy changes take ~60 seconds to propagate. Running the index
+creation script immediately after `terraform apply` will hit 403 even if the
+policy is correct. The `null_resource` local-exec includes `sleep 60` — do not
+remove it.
+
+---
+
+### KB ingestion `COMPLETE` but `numberOfDocumentsFailed=8`
+
+**Cause:** The document landing S3 bucket is KMS-encrypted with the platform KMS key.
+The KB service role (`hr-policies-kb-role-dev`) was missing `kms:Decrypt` and
+`kms:GenerateDataKey`.
+
+**Error in ingestion job:** `User: .../hr-policies-kb-role-dev/DocumentLoaderTask-... is not authorized to perform: kms:Decrypt`
+
+**Fix:** The KB IAM role policy must include a KMS statement for the platform KMS key.
+After adding the permission and re-applying, re-run ingestion:
+
+```bash
+KB_ID=$(terraform output -raw knowledge_base_id)
+DS_ID=$(terraform output -raw knowledge_base_data_source_id)
+JOB_ID=$(aws bedrock-agent start-ingestion-job \
+  --knowledge-base-id "${KB_ID}" --data-source-id "${DS_ID}" \
+  --region us-east-2 --query 'ingestionJob.ingestionJobId' --output text)
+# Check results:
+aws bedrock-agent get-ingestion-job \
+  --knowledge-base-id "${KB_ID}" --data-source-id "${DS_ID}" \
+  --ingestion-job-id "${JOB_ID}" --region us-east-2 \
+  --query 'ingestionJob.{status:status,stats:statistics,failures:failureReasons}'
+```
+
+---
+
+### `ResourceNotFoundException: No endpoint or agent found`
+
+**Cause:** Wrong runtime ARN format — `agent-runtime` in the path instead of `runtime`.
+
+```
+Wrong:   arn:aws:bedrock-agentcore:REGION:ACCOUNT:agent-runtime/<id>
+Correct: arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/<id>
+```
+
+Confirm correct ARN:
+
+```bash
+aws bedrock-agentcore-control get-agent-runtime \
+  --agent-runtime-id "$(terraform -chdir=../../platform output -raw agentcore_endpoint_id)" \
+  --region us-east-2 --query 'agentRuntimeArn' --output text
+```
+
+---
+
+### `Parameter validation failed: Invalid length for parameter runtimeSessionId`
+
+**Cause:** `--runtime-session-id` requires minimum 33 characters. Short strings like
+`test-session` fail validation.
+
+**Fix:** Use UUID-based session IDs:
+
+```bash
+SESSION_ID="smoke-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+# Result: "smoke-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" = 42 chars
+```
+
+---
+
+### Agent responds to all sessions with same context (session isolation broken)
+
+**Cause:** `--runtime-session-id` is not forwarded to the container. The container
+falls back to its default session ID and contaminated session history bleeds across
+invocations.
+
+**Fix:** Always include `sessionId` in the JSON payload body, not just in
+`--runtime-session-id`.
+
+---
+
+### Smoke test 7f failing (`Glean stub returned EMPTY`)
+
+**Cause:** The agent did not call the Glean tool — the KB context was sufficient to
+answer the question and the model chose not to invoke the MCP tool. This is correct
+agent behaviour, not a bug. Test 7f was redesigned to call the Glean Lambda directly
+(bypassing the agent) to validate the MCP tool independently.
+
+If the direct Lambda call also fails, check:
+1. Lambda function exists: `aws lambda get-function --function-name ai-platform-dev-glean-stub --region us-east-2`
+2. Payload format is correct MCP JSON-RPC `tools/call` with `{"body": "...", "requestContext": {...}, "rawPath": "/"}`
+
+---
+
 ## Adding Agent-Specific Resources
 
 1. Define resources in `main.tf`. Use `data.terraform_remote_state.platform`
