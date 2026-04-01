@@ -34,7 +34,7 @@ data "terraform_remote_state" "platform" {
 # Component 1 — System Prompt (Bedrock Prompt Management)
 # ---------------------------------------------------------------------------
 
-resource "aws_bedrock_prompt" "hr_assistant_system" {
+resource "aws_bedrockagent_prompt" "hr_assistant_system" {
   name        = "hr-assistant-system-prompt-dev"
   description = "System prompt for the HR Assistant agent - dev environment."
 
@@ -43,6 +43,7 @@ resource "aws_bedrock_prompt" "hr_assistant_system" {
   variant {
     name          = "default"
     template_type = "TEXT"
+    model_id      = var.model_arn
     template_configuration {
       text {
         text = file("${path.module}/prompts/hr-assistant-system-prompt.txt")
@@ -53,10 +54,9 @@ resource "aws_bedrock_prompt" "hr_assistant_system" {
   tags = merge(var.tags, { Component = "system-prompt" })
 }
 
-resource "aws_bedrock_prompt_version" "hr_assistant_system" {
-  prompt_arn  = aws_bedrock_prompt.hr_assistant_system.arn
-  description = "Phase 1 baseline — dev environment."
-}
+# NOTE: aws_bedrockagent_prompt does not have a separate version resource in
+# provider v6. The prompt ARN is available directly as a computed attribute.
+# Use aws_bedrockagent_prompt.hr_assistant_system.arn throughout.
 
 # ---------------------------------------------------------------------------
 # Component 2 — Guardrails (Bedrock Guardrails)
@@ -155,7 +155,7 @@ resource "aws_bedrock_guardrail" "hr_assistant" {
     }
 
     pii_entities_config {
-      type   = "DATE_OF_BIRTH"
+      type   = "AGE"
       action = "ANONYMIZE"
     }
 
@@ -170,7 +170,7 @@ resource "aws_bedrock_guardrail" "hr_assistant" {
     }
 
     pii_entities_config {
-      type   = "BANK_ACCOUNT_NUMBER"
+      type   = "US_BANK_ACCOUNT_NUMBER"
       action = "ANONYMIZE"
     }
   }
@@ -209,7 +209,7 @@ locals {
     agentId            = "hr-assistant-dev"
     displayName        = "HR Assistant (Dev)"
     modelArn           = var.model_arn
-    systemPromptArn    = aws_bedrock_prompt_version.hr_assistant_system.arn
+    systemPromptArn    = aws_bedrockagent_prompt.hr_assistant_system.arn
     guardrailId        = aws_bedrock_guardrail.hr_assistant.guardrail_id
     guardrailVersion   = aws_bedrock_guardrail.hr_assistant.version
     endpointId         = data.terraform_remote_state.platform.outputs.agentcore_endpoint_id
@@ -239,7 +239,7 @@ locals {
 resource "terraform_data" "hr_assistant_manifest" {
   # Re-register when any manifest input changes.
   triggers_replace = [
-    aws_bedrock_prompt_version.hr_assistant_system.arn,
+    aws_bedrockagent_prompt.hr_assistant_system.arn,
     aws_bedrock_guardrail.hr_assistant.guardrail_id,
     aws_bedrock_guardrail.hr_assistant.version,
     data.terraform_remote_state.platform.outputs.agentcore_endpoint_id,
@@ -258,7 +258,7 @@ resource "terraform_data" "hr_assistant_manifest" {
           "agent_id":        {"S": "hr-assistant-dev"},
           "display_name":    {"S": "HR Assistant (Dev)"},
           "model_arn":       {"S": "${var.model_arn}"},
-          "system_prompt_arn": {"S": "${aws_bedrock_prompt_version.hr_assistant_system.arn}"},
+          "system_prompt_arn": {"S": "${aws_bedrockagent_prompt.hr_assistant_system.arn}"},
           "guardrail_id":    {"S": "${aws_bedrock_guardrail.hr_assistant.guardrail_id}"},
           "guardrail_version": {"S": "${aws_bedrock_guardrail.hr_assistant.version}"},
           "endpoint_id":     {"S": "${data.terraform_remote_state.platform.outputs.agentcore_endpoint_id}"},
