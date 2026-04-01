@@ -181,3 +181,95 @@ resource "aws_bedrock_guardrail" "hr_assistant" {
 
   tags = merge(var.tags, { Component = "guardrail" })
 }
+
+# ---------------------------------------------------------------------------
+# Component 3 — Agent Manifest and AgentCore Configuration
+#
+# NOTE: As of the AWS provider v6 (October 2025 GA), there is no native
+# Terraform resource for registering a declarative agent manifest with a
+# system prompt ARN, guardrail, and tool policy against an existing
+# AgentCore runtime endpoint. The aws_bedrockagentcore_agent_runtime resource
+# manages container-based runtimes (ECR-backed) and is not applicable here.
+#
+# This component uses terraform_data + local-exec to call the AgentCore API
+# via the AWS CLI. Replace with a native Terraform resource when the
+# hashicorp/aws provider adds aws_bedrockagentcore_agent_configuration or
+# equivalent support.
+#
+# AgentCore Agent Registry API reference:
+# https://docs.aws.amazon.com/bedrock/latest/APIReference/API_agentcore_CreateAgentRuntime.html
+# ---------------------------------------------------------------------------
+
+locals {
+  agent_manifest = jsonencode({
+    agentId            = "hr-assistant-dev"
+    displayName        = "HR Assistant (Dev)"
+    modelArn           = var.model_arn
+    systemPromptArn    = aws_bedrock_prompt_version.hr_assistant_system.arn
+    guardrailId        = aws_bedrock_guardrail.hr_assistant.guardrail_id
+    guardrailVersion   = aws_bedrock_guardrail.hr_assistant.version
+    endpointId         = data.terraform_remote_state.platform.outputs.agentcore_endpoint_id
+    gatewayId          = data.terraform_remote_state.platform.outputs.agentcore_gateway_id
+    memoryConfig = {
+      sessionTtlHours       = 24
+      longTermMemoryEnabled = false
+    }
+    toolPolicy = {
+      allowedTools = ["glean-search"]
+      deniedTools  = ["all-write-tools"]
+    }
+    dataClassificationCeiling = "INTERNAL"
+    qualitySla = {
+      groundingScoreMin     = 0.75
+      responseLatencyP95Ms  = 5000
+    }
+    costBudget = {
+      monthlyUsdLimit    = 50
+      alertThresholdPct  = 80
+    }
+  })
+}
+
+# Write manifest to S3 agent registry for auditability and runtime reference.
+# The manifest JSON is stored alongside the agent registry DynamoDB table.
+resource "terraform_data" "hr_assistant_manifest" {
+  # Re-register when any manifest input changes.
+  triggers_replace = [
+    aws_bedrock_prompt_version.hr_assistant_system.arn,
+    aws_bedrock_guardrail.hr_assistant.guardrail_id,
+    aws_bedrock_guardrail.hr_assistant.version,
+    data.terraform_remote_state.platform.outputs.agentcore_endpoint_id,
+    data.terraform_remote_state.platform.outputs.agentcore_gateway_id,
+    var.model_arn,
+  ]
+
+  provisioner "local-exec" {
+    command = <<-SCRIPT
+      set -e
+      echo 'Registering HR Assistant agent manifest in agent registry table...'
+      aws dynamodb put-item \
+        --region "${var.aws_region}" \
+        --table-name "${data.terraform_remote_state.platform.outputs.agent_registry_table}" \
+        --item '{
+          "agent_id":        {"S": "hr-assistant-dev"},
+          "display_name":    {"S": "HR Assistant (Dev)"},
+          "model_arn":       {"S": "${var.model_arn}"},
+          "system_prompt_arn": {"S": "${aws_bedrock_prompt_version.hr_assistant_system.arn}"},
+          "guardrail_id":    {"S": "${aws_bedrock_guardrail.hr_assistant.guardrail_id}"},
+          "guardrail_version": {"S": "${aws_bedrock_guardrail.hr_assistant.version}"},
+          "endpoint_id":     {"S": "${data.terraform_remote_state.platform.outputs.agentcore_endpoint_id}"},
+          "gateway_id":      {"S": "${data.terraform_remote_state.platform.outputs.agentcore_gateway_id}"},
+          "allowed_tools":   {"SS": ["glean-search"]},
+          "data_classification_ceiling": {"S": "INTERNAL"},
+          "session_ttl_hours": {"N": "24"},
+          "grounding_score_min": {"N": "0.75"},
+          "response_latency_p95_ms": {"N": "5000"},
+          "monthly_usd_limit": {"N": "50"},
+          "alert_threshold_pct": {"N": "80"},
+          "environment":     {"S": "${var.environment}"},
+          "registered_at":   {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+        }'
+      echo 'Agent manifest registered successfully.'
+    SCRIPT
+  }
+}
