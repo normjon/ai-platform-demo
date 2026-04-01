@@ -27,9 +27,9 @@ variable "project_name" {
 }
 
 variable "model_arn" {
-  description = "Bedrock model ARN for the HR Assistant agent. Must use an approved model ARN."
+  description = "Bedrock model inference profile ID for the HR Assistant agent. Claude 4.x requires a cross-region inference profile (us.*) for on-demand throughput."
   type        = string
-  default     = "anthropic.claude-sonnet-4-6"
+  default     = "us.anthropic.claude-sonnet-4-6"
 }
 
 variable "tags" {

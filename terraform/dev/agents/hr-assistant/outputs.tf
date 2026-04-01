@@ -43,3 +43,22 @@ output "prompt_vault_bucket" {
   description = "Prompt Vault S3 bucket name — re-exported from platform for smoke test use."
   value       = data.terraform_remote_state.platform.outputs.prompt_vault_bucket
 }
+
+# ---------------------------------------------------------------------------
+# Component 3 — HR Policies Knowledge Base
+# ---------------------------------------------------------------------------
+
+output "knowledge_base_id" {
+  description = "Bedrock Knowledge Base ID for the HR Policies KB."
+  value       = aws_bedrockagent_knowledge_base.hr_policies.id
+}
+
+output "knowledge_base_data_source_id" {
+  description = "Bedrock Knowledge Base data source ID."
+  value       = aws_bedrockagent_data_source.hr_policies.data_source_id
+}
+
+output "opensearch_collection_endpoint" {
+  description = "OpenSearch Serverless collection endpoint."
+  value       = aws_opensearchserverless_collection.hr_policies.collection_endpoint
+}
