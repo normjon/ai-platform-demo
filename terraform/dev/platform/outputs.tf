@@ -64,3 +64,24 @@ output "log_group_agentcore" {
   description = "CloudWatch log group name for AgentCore invocations."
   value       = module.observability.log_group_agentcore
 }
+
+# OpenSearch Serverless — shared collection consumed by agent KB layers.
+output "opensearch_collection_id" {
+  description = "AOSS collection ID — used by agents to confirm ACTIVE status before applying."
+  value       = aws_opensearchserverless_collection.kb.id
+}
+
+output "opensearch_collection_arn" {
+  description = "AOSS collection ARN — referenced in aws_bedrockagent_knowledge_base storage config."
+  value       = aws_opensearchserverless_collection.kb.arn
+}
+
+output "opensearch_collection_endpoint" {
+  description = "AOSS collection endpoint URL — used by null_resource index creation scripts."
+  value       = aws_opensearchserverless_collection.kb.collection_endpoint
+}
+
+output "opensearch_collection_name" {
+  description = "AOSS collection name — referenced in agent data access policy resource strings."
+  value       = aws_opensearchserverless_collection.kb.name
+}

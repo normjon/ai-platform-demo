@@ -13,14 +13,16 @@ It provisions everything specific to this agent and nothing else:
 
 - Bedrock Prompt (system prompt)
 - Bedrock Guardrail (topic policies, content filters, PII)
-- HR Policies Knowledge Base (OpenSearch Serverless + Bedrock KB + 8 HR policy docs)
+- Bedrock Prompt (system prompt)
+- Bedrock Guardrail (topic policies, content filters, PII)
+- HR Policies Knowledge Base (agent-level AOSS data access policy + Bedrock KB + 8 HR policy docs)
 - Agent manifest (DynamoDB registry entry via local-exec)
 - Prompt Vault Lambda (write path to S3)
 - Agent container build and push instructions (container is deployed via platform layer)
 
 It does NOT own: VPC, KMS, ECR, AgentCore runtime, MCP Gateway, S3 buckets, DynamoDB tables
-for session memory or agent registry. Those are platform layer resources consumed via
-`terraform_remote_state`.
+for session memory or agent registry, or the AOSS collection. Those are platform layer
+resources consumed via `terraform_remote_state`.
 
 ---
 
@@ -52,6 +54,21 @@ platform layer — not this layer.
 ### 4. Container image pushed to ECR
 The platform layer's `agent_image_uri` in `terraform.tfvars` must point to a pushed image.
 See "Container Build" below.
+
+### 5. OpenSearch Serverless collection is ACTIVE
+The AOSS collection is provisioned by the platform layer. Confirm it is ACTIVE before
+applying this layer — the null_resource index creation script will fail if the collection
+is still in CREATING state.
+
+```bash
+aws opensearchserverless get-collection \
+  --id $(cd ../../platform && terraform output -raw opensearch_collection_id) \
+  --region us-east-2 \
+  --query 'collectionDetails.status'
+```
+
+Expected: `"ACTIVE"`. If `"CREATING"`: wait — collection creation takes approximately
+9 minutes. If `"FAILED"`: apply the platform layer and check CloudWatch for errors.
 
 ---
 
@@ -130,15 +147,27 @@ the runtime receives `AccessDeniedException` even though the InvokeModel action 
 
 ## HR Policies Knowledge Base
 
+### Ownership split
+
+The AOSS collection is owned by the platform layer. This layer owns:
+- `aws_opensearchserverless_access_policy` (`hr-policies-kb-access-dev`) — grants the
+  KB IAM role access to `hr-policies-index` only, not the full collection
+- `null_resource` — pre-creates the index inside the platform collection
+- `aws_bedrockagent_knowledge_base` and `aws_bedrockagent_data_source`
+
+The collection ARN and endpoint are consumed from platform remote state.
+
 ### Apply sequence
 
-The KB depends on four resources that must exist in order:
+The platform collection must be ACTIVE (pre-flight check 5) before this layer is applied.
+Within this layer, resources are created in this order:
 
 ```
-AOSS security policies → AOSS access policy → AOSS collection (9 min)
-  → null_resource (create vector index, 60s sleep + opensearch-py call)
-    → aws_bedrockagent_knowledge_base
-      → aws_bedrockagent_data_source
+Platform collection ACTIVE (pre-condition)
+  → aws_opensearchserverless_access_policy.hr_policies_kb_access
+    → null_resource (60s sleep + create hr-policies-index)
+      → aws_bedrockagent_knowledge_base
+        → aws_bedrockagent_data_source
 ```
 
 The `null_resource` is not optional. **Bedrock KB does not auto-create the OpenSearch
@@ -146,26 +175,17 @@ vector index.** If the index does not exist before `aws_bedrockagent_knowledge_b
 is applied, Bedrock returns:
 `ValidationException: no such index [hr-policies-index]`
 
-### AOSS data access policy principal
-
-Use `data.aws_iam_session_context.current.issuer_arn` — NOT `data.aws_caller_identity.current.arn`.
-
-The difference matters for SSO users:
-- `aws_caller_identity.arn` returns the STS session ARN: `arn:aws:sts::ACCOUNT:assumed-role/ROLE/SESSION`
-  This changes every time the SSO token refreshes. The AOSS policy match fails after refresh.
-- `aws_iam_session_context.issuer_arn` returns the stable IAM role ARN:
-  `arn:aws:iam::ACCOUNT:role/aws-reserved/sso.amazonaws.com/REGION/ROLE`
-  This is stable across refreshes.
-
-If the null_resource script gets HTTP 403 from OpenSearch Serverless, the data access
-policy principal is the first thing to check.
-
 ### AOSS propagation delay
 
-AOSS data access policy changes take up to 60 seconds to propagate. The null_resource
-local-exec includes `sleep 60` before the index creation script. Do not remove this sleep.
-Running the script immediately after `aws_opensearchserverless_access_policy` apply
-results in 403 Forbidden even when the policy is correct.
+The agent-level data access policy (`hr-policies-kb-access-dev`) takes up to 60 seconds
+to propagate. The null_resource local-exec includes `sleep 60` before the index creation
+script. Do not remove this sleep — running the script immediately after the policy is
+applied results in 403 Forbidden even when the policy is correct.
+
+The platform-level data access policy (`ai-platform-kb-platform-dev`, applied in the
+platform layer) also has a 60-second propagation delay. In practice, the ~9 minute
+collection creation time means the platform policy is fully propagated before this
+layer is ever applied.
 
 ### KB IAM role: KMS Decrypt is mandatory
 
@@ -346,9 +366,6 @@ aws dynamodb delete-item \
 
 **S3 prompt vault objects** — written by smoke tests and live invocations.
 Must be purged before destroying the platform layer. See platform README.
-
-**OpenSearch Serverless collection** — takes ~5 minutes to delete. The destroy
-will hang during this period; this is normal.
 
 ---
 

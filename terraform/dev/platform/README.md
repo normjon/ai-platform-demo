@@ -33,6 +33,10 @@ run on top of:
 | `module.storage` | 2 S3 buckets + 2 DynamoDB tables (KMS encrypted) |
 | `module.observability` | 2 CloudWatch log groups + 2 metric alarms |
 | `module.agentcore` | AgentCore runtime endpoint + MCP Gateway |
+| `aws_opensearchserverless_collection.kb` | Shared AOSS VECTORSEARCH collection (`ai-platform-kb-dev`) |
+| `aws_opensearchserverless_security_policy.kb_encryption` | AWS-managed KMS encryption policy |
+| `aws_opensearchserverless_security_policy.kb_network` | Public endpoint network policy (required by Bedrock) |
+| `aws_opensearchserverless_access_policy.kb_platform_access` | Platform-level index management access for Terraform caller (`ai-platform-kb-platform-dev`) |
 
 ### Storage Resources
 
@@ -87,6 +91,10 @@ all downstream layers.
 | `session_memory_table` | DynamoDB table name |
 | `agent_registry_table` | DynamoDB table name |
 | `log_group_agentcore` | CloudWatch log group name |
+| `opensearch_collection_id` | AOSS collection ID |
+| `opensearch_collection_arn` | AOSS collection ARN — used in `aws_bedrockagent_knowledge_base` |
+| `opensearch_collection_endpoint` | AOSS collection endpoint URL — used by index creation scripts |
+| `opensearch_collection_name` | AOSS collection name — used in agent data access policy resource strings |
 
 ---
 
@@ -235,6 +243,66 @@ aws cloudwatch describe-alarms \
   --query 'MetricAlarms[].{name:AlarmName,state:StateValue}' \
   --output table
 ```
+
+---
+
+## OpenSearch Serverless Collection
+
+The platform provisions one shared AOSS collection (`ai-platform-kb-dev`) used
+by all agents with Knowledge Bases. Agents own their index within this collection
+— they do not own the collection itself.
+
+| Property | Value |
+|---|---|
+| Collection name | `ai-platform-kb-dev` |
+| Collection type | `VECTORSEARCH` |
+| Encryption | AWS-managed KMS |
+| Network | Public endpoint (required by Bedrock managed service — see note below) |
+| Creation time | ~9 minutes on first apply |
+
+### Adding a new agent Knowledge Base
+
+Each agent that needs a Knowledge Base must add to its own agent layer:
+
+1. An `aws_opensearchserverless_access_policy` granting its KB IAM role access to
+   its specific index only. Pattern: `index/ai-platform-kb-dev/<agent-name>-index`
+2. A `null_resource` with `sleep 60` to pre-create the index using
+   `scripts/create-os-index.py`, reading the collection endpoint from platform
+   remote state: `data.terraform_remote_state.platform.outputs.opensearch_collection_endpoint`
+3. An `aws_bedrockagent_knowledge_base` referencing the collection ARN from
+   platform remote state: `data.terraform_remote_state.platform.outputs.opensearch_collection_arn`
+
+Never modify the platform-level data access policy (`ai-platform-kb-platform-dev`).
+Each agent's access policy is independent — no agent can read another agent's index.
+
+### Network policy note
+
+The AOSS network policy allows public endpoint access. This is required by the
+Bedrock managed service — Bedrock KB cannot reach AOSS through a VPC endpoint.
+This is intentional. Data in transit is encrypted (TLS). Data at rest uses
+AWS-managed KMS.
+
+### Pre-flight check before applying an agent layer with a Knowledge Base
+
+Confirm the collection is ACTIVE before applying any agent layer that includes a KB:
+
+```bash
+aws opensearchserverless get-collection \
+  --id $(terraform output -raw opensearch_collection_id) \
+  --region us-east-2 \
+  --query 'collectionDetails.status'
+```
+
+Expected: `"ACTIVE"`. If `"CREATING"`: wait — collection creation takes ~9 minutes.
+
+### Propagation delay note
+
+The platform-level AOSS data access policy (`ai-platform-kb-platform-access-dev`)
+takes ~60 seconds to propagate after apply. Agent layer null_resource scripts
+include `sleep 60` for the agent-level policy propagation. In practice, the ~9
+minute collection creation time means the platform policy will have fully
+propagated before any agent layer is applied. If platform and agent layers are
+ever applied in rapid automated succession, add an explicit wait between them.
 
 ---
 

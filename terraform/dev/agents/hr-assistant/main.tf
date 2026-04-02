@@ -21,18 +21,6 @@ provider "aws" {
   region = var.aws_region
 }
 
-# Current caller identity and session context — used to grant index-creation
-# access in OpenSearch Serverless data access policy so null_resource local-exec
-# can create the vector index before Bedrock KB is provisioned.
-# aws_iam_session_context derives the IAM role ARN (with path) from the session
-# ARN, which is stable across SSO refreshes. Using the session ARN directly in
-# AOSS data access policies fails when the SSO token is refreshed (new session).
-data "aws_caller_identity" "current" {}
-
-data "aws_iam_session_context" "current" {
-  arn = data.aws_caller_identity.current.arn
-}
-
 # ---------------------------------------------------------------------------
 # Platform state — reads AgentCore endpoint and shared platform outputs.
 # ---------------------------------------------------------------------------
@@ -427,7 +415,6 @@ resource "aws_lambda_permission" "agentcore_invoke_prompt_vault_writer" {
 # ---------------------------------------------------------------------------
 
 locals {
-  kb_collection_name = "hr-policies-kb-dev"
   kb_index_name      = "hr-policies-index"
   # S3 prefix under the document landing bucket where HR policy docs live.
   hr_policies_s3_prefix = "hr-policies/"
@@ -435,96 +422,47 @@ locals {
 }
 
 # ---------------------------------------------------------------------------
-# OpenSearch Serverless — encryption, network, and data access policies.
-# Public network access is required because Bedrock is a managed service that
-# accesses OpenSearch from outside the customer VPC. Data access is restricted
-# to the KB IAM role via the data access policy.
+# Agent-level AOSS data access policy.
+#
+# The AOSS collection is owned by the platform layer. This policy grants
+# the HR Policies KB IAM role access to hr-policies-index only — not to
+# the full collection. Future agents add their own equivalent policy for
+# their own index; no agent can access another agent's index.
+#
+# The platform-level data access policy (ai-platform-kb-platform-access-dev)
+# grants the Terraform caller access for index management — do not modify it
+# from this layer.
+#
+# AOSS data access policy propagation takes ~60 seconds. The null_resource
+# below includes sleep 60 before running the index creation script.
 # ---------------------------------------------------------------------------
 
-resource "aws_opensearchserverless_security_policy" "hr_policies_encryption" {
-  name        = "hr-policies-enc-dev"
-  type        = "encryption"
-  description = "AWS-managed encryption for HR Policies KB collection."
-  policy = jsonencode({
-    Rules = [{
-      ResourceType = "collection"
-      Resource     = ["collection/${local.kb_collection_name}"]
-    }]
-    AWSOwnedKey = true
-  })
-}
-
-resource "aws_opensearchserverless_security_policy" "hr_policies_network" {
-  name        = "hr-policies-net-dev"
-  type        = "network"
-  description = "Public endpoint access for HR Policies KB collection."
-  policy = jsonencode([{
-    Rules = [
-      {
-        ResourceType = "collection"
-        Resource     = ["collection/${local.kb_collection_name}"]
-      },
-      {
-        ResourceType = "dashboard"
-        Resource     = ["collection/${local.kb_collection_name}"]
-      }
-    ]
-    AllowFromPublic = true
-  }])
-}
-
-resource "aws_opensearchserverless_access_policy" "hr_policies_data" {
-  name        = "hr-policies-data-dev"
+resource "aws_opensearchserverless_access_policy" "hr_policies_kb_access" {
+  name        = "hr-policies-kb-access-dev"
   type        = "data"
-  description = "Allow Bedrock KB role to manage hr-policies index and documents."
+  description = "Grant HR Policies KB role access to hr-policies-index only."
   policy = jsonencode([{
     Rules = [
-      {
-        ResourceType = "collection"
-        Resource     = ["collection/${local.kb_collection_name}"]
-        Permission   = [
-          "aoss:CreateCollectionItems",
-          "aoss:DeleteCollectionItems",
-          "aoss:UpdateCollectionItems",
-          "aoss:DescribeCollectionItems",
-        ]
-      },
       {
         ResourceType = "index"
-        Resource     = ["index/${local.kb_collection_name}/*"]
+        Resource     = ["index/${data.terraform_remote_state.platform.outputs.opensearch_collection_name}/${local.kb_index_name}"]
         Permission   = [
+          "aoss:ReadDocument",
+          "aoss:WriteDocument",
           "aoss:CreateIndex",
           "aoss:DeleteIndex",
           "aoss:UpdateIndex",
           "aoss:DescribeIndex",
-          "aoss:ReadDocument",
-          "aoss:WriteDocument",
         ]
+      },
+      {
+        ResourceType = "collection"
+        Resource     = ["collection/${data.terraform_remote_state.platform.outputs.opensearch_collection_name}"]
+        Permission   = ["aoss:DescribeCollectionItems"]
       }
     ]
-    # Include the KB service role AND the Terraform caller's IAM role so
-    # null_resource local-exec can create the vector index before Bedrock KB
-    # is provisioned. The role ARN (not session ARN) is used so the policy
-    # remains valid across SSO token refreshes.
-    Principal = [
-      aws_iam_role.hr_policies_kb.arn,
-      data.aws_iam_session_context.current.issuer_arn,
-    ]
+    Principal = [aws_iam_role.hr_policies_kb.arn]
   }])
-}
-
-resource "aws_opensearchserverless_collection" "hr_policies" {
-  name        = local.kb_collection_name
-  description = "Vector store for HR Policies Knowledge Base."
-  type        = "VECTORSEARCH"
-
-  depends_on = [
-    aws_opensearchserverless_security_policy.hr_policies_encryption,
-    aws_opensearchserverless_security_policy.hr_policies_network,
-    aws_opensearchserverless_access_policy.hr_policies_data,
-  ]
-
-  tags = merge(var.tags, { Component = "hr-policies-kb" })
 }
 
 # ---------------------------------------------------------------------------
@@ -609,21 +547,20 @@ resource "aws_iam_role_policy" "hr_policies_kb" {
 # ---------------------------------------------------------------------------
 
 resource "null_resource" "create_hr_policies_index" {
-  # Re-run if the collection is replaced.
+  # Re-run if the platform collection endpoint changes (collection replaced).
   triggers = {
-    collection_id = aws_opensearchserverless_collection.hr_policies.id
+    collection_endpoint = data.terraform_remote_state.platform.outputs.opensearch_collection_endpoint
   }
 
   provisioner "local-exec" {
-    # Sleep 60s to allow the AOSS data access policy to propagate before the
-    # index creation request. AOSS data access policies have eventual consistency.
-    # uv run creates an ephemeral venv — does not modify system Python.
-    command = "sleep 60 && uv run --with boto3 --with opensearch-py python3 ${path.module}/scripts/create-os-index.py ${aws_opensearchserverless_collection.hr_policies.collection_endpoint} ${var.aws_region}"
+    # Sleep 60s to allow the agent-level AOSS data access policy to propagate
+    # before the index creation request. AOSS data access policies have eventual
+    # consistency (~60s). uv run creates an ephemeral venv — no system Python.
+    command = "sleep 60 && uv run --with boto3 --with opensearch-py python3 ${path.module}/scripts/create-os-index.py ${data.terraform_remote_state.platform.outputs.opensearch_collection_endpoint} ${var.aws_region}"
   }
 
   depends_on = [
-    aws_opensearchserverless_collection.hr_policies,
-    aws_opensearchserverless_access_policy.hr_policies_data,
+    aws_opensearchserverless_access_policy.hr_policies_kb_access,
   ]
 }
 
@@ -646,7 +583,7 @@ resource "aws_bedrockagent_knowledge_base" "hr_policies" {
   storage_configuration {
     type = "OPENSEARCH_SERVERLESS"
     opensearch_serverless_configuration {
-      collection_arn    = aws_opensearchserverless_collection.hr_policies.arn
+      collection_arn    = data.terraform_remote_state.platform.outputs.opensearch_collection_arn
       vector_index_name = local.kb_index_name
       field_mapping {
         vector_field   = "embedding"
@@ -660,7 +597,7 @@ resource "aws_bedrockagent_knowledge_base" "hr_policies" {
 
   depends_on = [
     aws_iam_role_policy.hr_policies_kb,
-    aws_opensearchserverless_access_policy.hr_policies_data,
+    aws_opensearchserverless_access_policy.hr_policies_kb_access,
     null_resource.create_hr_policies_index,
   ]
 }

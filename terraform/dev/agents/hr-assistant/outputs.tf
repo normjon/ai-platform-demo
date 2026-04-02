@@ -59,6 +59,6 @@ output "knowledge_base_data_source_id" {
 }
 
 output "opensearch_collection_endpoint" {
-  description = "OpenSearch Serverless collection endpoint."
-  value       = aws_opensearchserverless_collection.hr_policies.collection_endpoint
+  description = "OpenSearch Serverless collection endpoint — re-exported from platform."
+  value       = data.terraform_remote_state.platform.outputs.opensearch_collection_endpoint
 }
