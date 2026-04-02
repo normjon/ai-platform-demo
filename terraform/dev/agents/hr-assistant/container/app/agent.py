@@ -199,8 +199,6 @@ def _extract_guardrail_result(resp: dict) -> dict:
         return {"action": "NONE", "topic_policy_result": "", "content_filter_result": ""}
 
     guardrail_trace = resp.get("trace", {}).get("guardrail", {})
-    # Temporary: log raw trace so we can confirm the exact structure from Bedrock.
-    logger.info(json.dumps({"event": "guardrail_trace_raw", "trace": guardrail_trace}, default=str))
 
     topic_name = ""
     content_filter_name = ""
