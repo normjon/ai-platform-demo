@@ -37,6 +37,17 @@ locals {
 # Run `terraform apply` in foundation/ before applying this layer.
 # ---------------------------------------------------------------------------
 
+# Current caller identity and session context — used to grant the Terraform
+# caller access to the AOSS collection for index management operations.
+# aws_iam_session_context derives the stable IAM role ARN from the session ARN,
+# which remains valid across SSO token refreshes. Using the session ARN directly
+# in AOSS data access policies fails when the SSO token is refreshed (new session).
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_session_context" "current" {
+  arn = data.aws_caller_identity.current.arn
+}
+
 data "terraform_remote_state" "foundation" {
   backend = "s3"
   config = {
@@ -291,6 +302,88 @@ module "observability" {
   name_prefix = local.name_prefix
   kms_key_arn = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
   tags        = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# OpenSearch Serverless — shared collection for all agent Knowledge Bases.
+#
+# The platform owns the collection. Each agent owns its index within the
+# collection via its own supplementary data access policy (agent layer).
+#
+# Network policy allows public endpoint access — this is required because
+# Bedrock is a managed service that accesses AOSS from outside the customer
+# VPC. Data in transit is encrypted (TLS). Data at rest uses AWS-managed KMS.
+# ---------------------------------------------------------------------------
+
+resource "aws_opensearchserverless_security_policy" "kb_encryption" {
+  name        = "ai-platform-kb-enc-dev"
+  type        = "encryption"
+  description = "AWS-managed encryption for the shared AI Platform KB collection."
+  policy = jsonencode({
+    Rules = [{
+      ResourceType = "collection"
+      Resource     = ["collection/ai-platform-kb-dev"]
+    }]
+    AWSOwnedKey = true
+  })
+}
+
+resource "aws_opensearchserverless_security_policy" "kb_network" {
+  name        = "ai-platform-kb-net-dev"
+  type        = "network"
+  description = "Public endpoint access for the shared AI Platform KB collection (required by Bedrock managed service)."
+  policy = jsonencode([{
+    Rules = [
+      {
+        ResourceType = "collection"
+        Resource     = ["collection/ai-platform-kb-dev"]
+      },
+      {
+        ResourceType = "dashboard"
+        Resource     = ["collection/ai-platform-kb-dev"]
+      }
+    ]
+    AllowFromPublic = true
+  }])
+}
+
+# Platform-level data access policy — grants the Terraform caller full access
+# to the collection so it can create indexes via null_resource local-exec.
+# Each agent adds its own supplementary policy for its KB role (agent layer).
+# Agents never modify this policy.
+resource "aws_opensearchserverless_access_policy" "kb_platform_access" {
+  name        = "ai-platform-kb-platform-access-dev"
+  type        = "data"
+  description = "Platform-level AOSS access for Terraform caller (index management)."
+  policy = jsonencode([{
+    Rules = [
+      {
+        ResourceType = "index"
+        Resource     = ["index/ai-platform-kb-dev/*"]
+        Permission   = ["aoss:*"]
+      },
+      {
+        ResourceType = "collection"
+        Resource     = ["collection/ai-platform-kb-dev"]
+        Permission   = ["aoss:*"]
+      }
+    ]
+    Principal = [data.aws_iam_session_context.current.issuer_arn]
+  }])
+}
+
+resource "aws_opensearchserverless_collection" "kb" {
+  name        = "ai-platform-kb-dev"
+  description = "Shared vector store for all AI Platform agent Knowledge Bases."
+  type        = "VECTORSEARCH"
+
+  depends_on = [
+    aws_opensearchserverless_security_policy.kb_encryption,
+    aws_opensearchserverless_security_policy.kb_network,
+    aws_opensearchserverless_access_policy.kb_platform_access,
+  ]
+
+  tags = merge(local.common_tags, { Component = "opensearch" })
 }
 
 module "agentcore" {
