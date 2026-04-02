@@ -386,20 +386,28 @@ resource "aws_opensearchserverless_collection" "kb" {
   tags = merge(local.common_tags, { Component = "opensearch" })
 }
 
+# Prompt Vault Lambda — owned by agents/hr-assistant layer.
+# Read via data source so the platform layer never imports agent remote state
+# (dependency direction is always platform ← agents, never platform → agents).
+data "aws_lambda_function" "prompt_vault_writer" {
+  function_name = "hr-assistant-prompt-vault-writer-dev"
+}
+
 module "agentcore" {
   source = "../../modules/agentcore"
 
-  name_prefix          = local.name_prefix
-  aws_region           = var.aws_region
-  account_id           = var.account_id
-  model_arn_primary    = var.model_arn_primary
-  agent_image_uri      = var.agent_image_uri
-  ecr_repository_url   = data.terraform_remote_state.foundation.outputs.ecr_repository_url
-  subnet_ids           = data.terraform_remote_state.foundation.outputs.subnet_ids
-  agentcore_sg_id      = data.terraform_remote_state.foundation.outputs.agentcore_sg_id
-  session_memory_table = module.storage.session_memory_table
-  agent_registry_table = module.storage.agent_registry_table
-  agentcore_role_arn   = aws_iam_role.agentcore_runtime.arn
-  log_group_agentcore  = module.observability.log_group_agentcore
-  tags                 = local.common_tags
+  name_prefix             = local.name_prefix
+  aws_region              = var.aws_region
+  account_id              = var.account_id
+  model_arn_primary       = var.model_arn_primary
+  agent_image_uri         = var.agent_image_uri
+  ecr_repository_url      = data.terraform_remote_state.foundation.outputs.ecr_repository_url
+  subnet_ids              = data.terraform_remote_state.foundation.outputs.subnet_ids
+  agentcore_sg_id         = data.terraform_remote_state.foundation.outputs.agentcore_sg_id
+  session_memory_table    = module.storage.session_memory_table
+  agent_registry_table    = module.storage.agent_registry_table
+  agentcore_role_arn      = aws_iam_role.agentcore_runtime.arn
+  log_group_agentcore     = module.observability.log_group_agentcore
+  prompt_vault_lambda_arn = data.aws_lambda_function.prompt_vault_writer.arn
+  tags                    = local.common_tags
 }

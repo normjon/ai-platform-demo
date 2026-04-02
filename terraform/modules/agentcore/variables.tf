@@ -58,6 +58,11 @@ variable "log_group_agentcore" {
   type        = string
 }
 
+variable "prompt_vault_lambda_arn" {
+  description = "ARN of the Prompt Vault writer Lambda. Injected as PROMPT_VAULT_LAMBDA env var so the container can invoke it asynchronously after each agent response."
+  type        = string
+}
+
 variable "tags" {
   description = "Tags applied to all resources."
   type        = map(string)
