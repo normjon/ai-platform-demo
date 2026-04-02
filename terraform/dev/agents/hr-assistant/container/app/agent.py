@@ -186,6 +186,53 @@ def _call_glean(query: str) -> str:
         return "Search unavailable."
 
 
+def _extract_guardrail_result(resp: dict) -> dict:
+    """
+    Extract guardrail assessment from a Bedrock converse() response.
+
+    Returns the structured result expected by the Prompt Vault record.
+    When no guardrail fired, returns action=NONE with empty topic/filter fields.
+    When a guardrail fired, extracts the first blocked topic and content filter
+    from the trace assessments (both input and output assessments are checked).
+    """
+    if resp.get("stopReason", "") != "guardrail_intervened":
+        return {"action": "NONE", "topic_policy_result": "", "content_filter_result": ""}
+
+    guardrail_trace = resp.get("trace", {}).get("guardrail", {})
+
+    topic_name = ""
+    content_filter_name = ""
+
+    # inputAssessment is a dict keyed by guardrail ID; outputAssessments is a list.
+    raw_assessments: list[dict] = []
+    input_assessment = guardrail_trace.get("inputAssessment", {})
+    if isinstance(input_assessment, dict):
+        raw_assessments.extend(input_assessment.values())
+    output_assessments = guardrail_trace.get("outputAssessments", [])
+    if isinstance(output_assessments, list):
+        raw_assessments.extend(output_assessments)
+
+    for assessment in raw_assessments:
+        if not topic_name:
+            for topic in assessment.get("topicPolicy", {}).get("topics", []):
+                if topic.get("action") == "BLOCKED":
+                    topic_name = topic.get("name", "")
+                    break
+        if not content_filter_name:
+            for f in assessment.get("contentPolicy", {}).get("filters", []):
+                if f.get("action") == "BLOCKED":
+                    content_filter_name = f.get("type", "")
+                    break
+        if topic_name and content_filter_name:
+            break
+
+    return {
+        "action": "GUARDRAIL_INTERVENED",
+        "topic_policy_result": topic_name,
+        "content_filter_result": content_filter_name,
+    }
+
+
 _GLEAN_TOOL_SPEC = {
     "toolSpec": {
         "name": "glean_search",
@@ -247,6 +294,7 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
     total_input_tokens = 0
     total_output_tokens = 0
     final_response = ""
+    guardrail_result: dict[str, str] = {"action": "NONE", "topic_policy_result": "", "content_filter_result": ""}
 
     # Agentic loop — runs until the model stops requesting tools
     messages = list(history)
@@ -270,6 +318,10 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
         stop_reason = resp.get("stopReason", "")
         output_message = resp["output"]["message"]
         messages.append(output_message)
+
+        # Capture guardrail assessment on every round — overwrites only if
+        # a guardrail fires (action=NONE is the no-op default).
+        guardrail_result = _extract_guardrail_result(resp)
 
         if stop_reason == "tool_use":
             tool_results = []
@@ -318,6 +370,7 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
         "event": "agent_invoke",
         "session_id": session_id,
         "tool_calls": len(tool_calls_made),
+        "guardrail_action": guardrail_result["action"],
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
         "latency_ms": latency_ms,
@@ -326,6 +379,7 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
     return {
         "response": final_response,
         "tool_calls": tool_calls_made,
+        "guardrail_result": guardrail_result,
         "input_tokens": total_input_tokens,
         "output_tokens": total_output_tokens,
         "latency_ms": latency_ms,
