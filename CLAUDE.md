@@ -156,9 +156,9 @@ Never put IAM roles or policies inside any reusable module
 deprecated iam/ module). modules/iam/ is deprecated — do not
 add resources to it. IAM roles belong inline in the deployment
 layer that owns the resource they protect:
-  platform/      — agentcore_runtime role, bedrock_kb role
+  platform/      — agentcore_runtime role
   tools/<name>/  — that tool's Lambda execution role
-  agents/<name>/ — that agent's roles
+  agents/<name>/ — that agent's roles (including per-agent KB service roles)
 Service modules receive role ARNs as input variables and never
 create roles themselves.
 
@@ -207,7 +207,8 @@ staging or production resources.
 - DynamoDB tables for session memory and agent registry
 - S3 bucket for Prompt Vault
 - CloudWatch log groups and basic alarms
-- HR Policies Knowledge Base (OpenSearch Serverless + Bedrock KB)
+- Shared OpenSearch Serverless collection (`ai-platform-kb-dev`) — owned by platform layer
+- HR Policies Knowledge Base (Bedrock KB + per-index AOSS access policy) — owned by hr-assistant layer
 - 8 HR policy documents in document landing S3 bucket
 
 ### Deferred (do not provision):
@@ -577,15 +578,29 @@ NOT `/aws/agentcore/<name>` — that path does not exist. When debugging
 
 ### OpenSearch Serverless (AOSS) for Knowledge Bases
 
+**Ownership split:** The platform layer owns the shared AOSS collection
+(`ai-platform-kb-dev`), its encryption and network security policies, and
+the platform-level data access policy for the Terraform caller. Each agent
+layer owns only a per-index data access policy scoped to its own index,
+the `null_resource` that pre-creates the index, and the Bedrock KB and
+data source resources. Agents read `opensearch_collection_arn`,
+`opensearch_collection_endpoint`, and `opensearch_collection_name` from
+`data.terraform_remote_state.platform.outputs`.
+
 When provisioning a Bedrock Knowledge Base backed by AOSS:
 
 1. **Vector index must pre-exist.** Bedrock KB does not auto-create the
-   OpenSearch vector index. Apply order:
+   OpenSearch vector index. Full apply order across both layers:
    ```
-   AOSS security policies → AOSS access policy → AOSS collection (9 min)
-     → null_resource (60s sleep + create-os-index.py)
-       → aws_bedrockagent_knowledge_base
-         → aws_bedrockagent_data_source
+   Platform layer:
+     AOSS security policies → AOSS platform data access policy
+       → AOSS collection (9 min) → platform outputs available
+
+   Agent layer (reads collection outputs from platform remote state):
+     agent data access policy (per-index only)
+       → null_resource (60s sleep + create-os-index.py)
+         → aws_bedrockagent_knowledge_base
+           → aws_bedrockagent_data_source
    ```
 
 2. **AOSS data access policy propagation takes ~60 seconds.** Running

@@ -18,8 +18,10 @@ platform and foundation layers:
 - **Agent Manifest** — registered in the platform DynamoDB agent registry via
   `local-exec` (see Component 3 note below); includes KB ID from Phase 2
 - **Prompt Vault Lambda** — write path for persisting interaction records to S3
-- **HR Policies Knowledge Base** — OpenSearch Serverless + Bedrock Knowledge Base
-  with 8 HR policy documents; vector index pre-created by `null_resource` at apply
+- **HR Policies Knowledge Base** — Bedrock Knowledge Base backed by the platform-owned
+  OpenSearch Serverless collection (`ai-platform-kb-dev`); per-index access policy
+  (`hr-policies-kb-access-dev`) scoped to `hr-policies-index`; vector index pre-created
+  by `null_resource` at apply; collection ARN/endpoint/name read from platform remote state
 - **HR Assistant Container** — arm64/Graviton FastAPI container image pushed to ECR;
   deployed as the AgentCore runtime workload
 - **Golden Dataset** — 15 test cases for evaluating agent behaviour
@@ -39,13 +41,10 @@ platform and foundation layers:
 | `aws_cloudwatch_log_group` | `/aws/lambda/hr-assistant-prompt-vault-writer-dev` | 30-day retention, KMS encrypted |
 | `aws_lambda_function` | `hr-assistant-prompt-vault-writer-dev` | arm64/Graviton, python3.12 |
 | `aws_lambda_permission` | `AllowAgentCoreInvoke` | Allows AgentCore to invoke the Lambda |
-| `aws_opensearchserverless_security_policy` | `hr-policies-enc-dev` | AWS-managed encryption for collection |
-| `aws_opensearchserverless_security_policy` | `hr-policies-net-dev` | Public endpoint (required by Bedrock managed service) |
-| `aws_opensearchserverless_access_policy` | `hr-policies-data-dev` | Data access for KB role and Terraform caller |
-| `aws_opensearchserverless_collection` | `hr-policies-kb-dev` | VECTORSEARCH collection |
-| `null_resource` | `create_hr_policies_index` | Pre-creates `hr-policies-index` before KB creation |
+| `aws_opensearchserverless_access_policy` | `hr-policies-kb-access-dev` | Per-index data access for KB service role — scoped to `hr-policies-index` in platform collection only |
+| `null_resource` | `create_hr_policies_index` | Pre-creates `hr-policies-index` in the platform collection before KB creation |
 | `aws_iam_role` | `hr-policies-kb-role-dev` | Bedrock KB service role (Option B, scoped to this layer) |
-| `aws_iam_role_policy` | `HRPoliciesKBPolicy` | S3 read, OpenSearch write, Bedrock embedding, KMS decrypt |
+| `aws_iam_role_policy` | `HRPoliciesKBPolicy` | S3 read, Bedrock embedding, KMS decrypt — scoped to platform KMS key |
 | `aws_bedrockagent_knowledge_base` | `hr-policies-kb-dev` | VECTOR KB backed by OpenSearch Serverless |
 | `aws_bedrockagent_data_source` | `hr-policies-s3-source` | S3 data source reading `hr-policies/` prefix |
 | 8× `aws_s3_object` | `hr-policies/*.md` | Dev HR policy documents uploaded to document landing bucket |
@@ -123,8 +122,9 @@ Expected: `action = GUARDRAIL_INTERVENED`, topic `Legal Advice` detected and blo
 
 **Index pre-creation:** Bedrock KB requires the OpenSearch vector index to exist before
 KB creation. A `null_resource + local-exec` runs `scripts/create-os-index.py` (via
-`uv run --with boto3 --with opensearch-py`) after the collection is ACTIVE, with a
-60-second sleep for AOSS data access policy propagation.
+`uv run --with boto3 --with opensearch-py`) against the platform-owned collection,
+with a 60-second sleep for the agent-level AOSS data access policy to propagate.
+The platform collection must be ACTIVE before this layer is applied (see Prerequisites).
 
 **Ingestion:** Run after apply (or whenever documents change):
 
@@ -289,6 +289,10 @@ Reads the following outputs from the platform layer via `terraform_remote_state`
 | `agent_registry_table` | DynamoDB agent registry target for local-exec |
 | `prompt_vault_bucket` | Lambda environment variable, IAM S3 resource ARN |
 | `kms_key_arn` | Lambda IAM KMS permissions, CloudWatch log group encryption, KB KMS decrypt |
+| `opensearch_collection_arn` | `aws_bedrockagent_knowledge_base` storage config `collection_arn` |
+| `opensearch_collection_endpoint` | `null_resource` index creation script argument; re-exported as layer output |
+| `opensearch_collection_name` | AOSS access policy resource string (`index/<name>/hr-policies-index`) |
+| `opensearch_collection_id` | Pre-flight check — confirm collection is ACTIVE before applying this layer |
 
 ---
 
@@ -298,6 +302,16 @@ Reads the following outputs from the platform layer via `terraform_remote_state`
 - `terraform.tfvars` created with `account_id` set.
 - HR Assistant container image built and pushed to ECR (image tag in platform `terraform.tfvars`).
 - Python 3 and `uv` installed locally (required for `null_resource` index creation script).
+- Platform OpenSearch Serverless collection is ACTIVE (creation takes ~9 min on first apply):
+
+```bash
+aws opensearchserverless get-collection \
+  --id $(terraform -chdir=../../platform output -raw opensearch_collection_id) \
+  --region us-east-2 \
+  --query 'collectionDetails.status'
+```
+
+Expected: `"ACTIVE"`. Do not apply this layer until the collection is ACTIVE.
 
 ---
 

@@ -53,9 +53,10 @@ vs real image) is at `docs/agent-container.md`.
     │   ├── platform/           # Layer 2 — platform services (platform team)
     │   │   ├── backend.tf          # State key: dev/platform/terraform.tfstate
     │   │   ├── main.tf             # AgentCore runtime + gateway + storage + observability
-    │   │   │                       # + platform IAM roles (agentcore_runtime, bedrock_kb)
+    │   │   │                       # + shared AOSS collection + platform IAM (agentcore_runtime)
     │   │   ├── variables.tf
-    │   │   ├── outputs.tf          # Platform API: gateway_id, tables, buckets, vpc re-exports
+    │   │   ├── outputs.tf          # Platform API: gateway_id, tables, buckets, vpc re-exports,
+    │   │   │                       # opensearch_collection_arn/endpoint/name/id
     │   │   └── terraform.tfvars.example
     │   ├── tools/
     │   │   └── glean/          # Glean MCP tool (Glean/Search team)
