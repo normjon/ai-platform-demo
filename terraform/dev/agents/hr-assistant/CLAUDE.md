@@ -13,11 +13,9 @@ It provisions everything specific to this agent and nothing else:
 
 - Bedrock Prompt (system prompt)
 - Bedrock Guardrail (topic policies, content filters, PII)
-- Bedrock Prompt (system prompt)
-- Bedrock Guardrail (topic policies, content filters, PII)
 - HR Policies Knowledge Base (agent-level AOSS data access policy + Bedrock KB + 8 HR policy docs)
 - Agent manifest (DynamoDB registry entry via local-exec)
-- Prompt Vault Lambda (write path to S3)
+- Prompt Vault Lambda (`hr-assistant-prompt-vault-writer-dev`) — writes structured interaction records to S3 after every live agent invocation
 - Agent container build and push instructions (container is deployed via platform layer)
 
 It does NOT own: VPC, KMS, ECR, AgentCore runtime, MCP Gateway, S3 buckets, DynamoDB tables

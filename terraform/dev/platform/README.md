@@ -37,13 +37,14 @@ run on top of:
 | `aws_opensearchserverless_security_policy.kb_encryption` | AWS-managed KMS encryption policy |
 | `aws_opensearchserverless_security_policy.kb_network` | Public endpoint network policy (required by Bedrock) |
 | `aws_opensearchserverless_access_policy.kb_platform_access` | Platform-level index management access for Terraform caller (`ai-platform-kb-platform-dev`) |
+| `data.aws_lambda_function.prompt_vault_writer` | Reads the Prompt Vault Lambda ARN from AWS (owned by agent layer) so it can be injected into the AgentCore runtime without importing agent remote state |
 
 ### Storage Resources
 
 | Resource | Name | Purpose |
 |---|---|---|
 | S3 | `ai-platform-dev-document-landing-<account>` | Source documents for Knowledge Base ingestion |
-| S3 | `ai-platform-dev-prompt-vault-<account>` | Prompt templates — versioned, KMS encrypted |
+| S3 | `ai-platform-dev-prompt-vault-<account>` | Structured interaction records written by the Prompt Vault Lambda after every live agent invocation — versioned, KMS encrypted |
 | DynamoDB | `ai-platform-dev-session-memory` | AgentCore session state (partition: `session_id`, sort: `timestamp`) |
 | DynamoDB | `ai-platform-dev-agent-registry` | Agent manifest registry |
 
