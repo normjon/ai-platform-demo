@@ -36,7 +36,7 @@ run on top of:
 | `aws_opensearchserverless_collection.kb` | Shared AOSS VECTORSEARCH collection (`ai-platform-kb-dev`) |
 | `aws_opensearchserverless_security_policy.kb_encryption` | AWS-managed KMS encryption policy |
 | `aws_opensearchserverless_security_policy.kb_network` | Public endpoint network policy (required by Bedrock) |
-| `aws_opensearchserverless_access_policy.kb_platform_access` | Platform-level index management access for Terraform caller |
+| `aws_opensearchserverless_access_policy.kb_platform_access` | Platform-level index management access for Terraform caller (`ai-platform-kb-platform-dev`) |
 
 ### Storage Resources
 
@@ -272,7 +272,7 @@ Each agent that needs a Knowledge Base must add to its own agent layer:
 3. An `aws_bedrockagent_knowledge_base` referencing the collection ARN from
    platform remote state: `data.terraform_remote_state.platform.outputs.opensearch_collection_arn`
 
-Never modify the platform-level data access policy (`ai-platform-kb-platform-access-dev`).
+Never modify the platform-level data access policy (`ai-platform-kb-platform-dev`).
 Each agent's access policy is independent — no agent can read another agent's index.
 
 ### Network policy note

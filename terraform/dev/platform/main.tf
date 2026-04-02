@@ -352,7 +352,7 @@ resource "aws_opensearchserverless_security_policy" "kb_network" {
 # Each agent adds its own supplementary policy for its KB role (agent layer).
 # Agents never modify this policy.
 resource "aws_opensearchserverless_access_policy" "kb_platform_access" {
-  name        = "ai-platform-kb-platform-access-dev"
+  name        = "ai-platform-kb-platform-dev"
   type        = "data"
   description = "Platform-level AOSS access for Terraform caller (index management)."
   policy = jsonencode([{

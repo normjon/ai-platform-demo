@@ -182,9 +182,10 @@ to propagate. The null_resource local-exec includes `sleep 60` before the index 
 script. Do not remove this sleep — running the script immediately after the policy is
 applied results in 403 Forbidden even when the policy is correct.
 
-The platform-level data access policy (applied in the platform layer) also has a 60-second
-propagation delay. In practice, the ~9 minute collection creation time means the platform
-policy is fully propagated before this layer is ever applied.
+The platform-level data access policy (`ai-platform-kb-platform-dev`, applied in the
+platform layer) also has a 60-second propagation delay. In practice, the ~9 minute
+collection creation time means the platform policy is fully propagated before this
+layer is ever applied.
 
 ### KB IAM role: KMS Decrypt is mandatory
 
