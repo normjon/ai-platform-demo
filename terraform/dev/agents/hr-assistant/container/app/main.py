@@ -105,7 +105,7 @@ async def invocations(request: Request) -> Response:
         user_input=user_message,
         agent_output=result["response"],
         tool_calls=result["tool_calls"],
-        guardrail_result={"action": "NONE"},
+        guardrail_result=result["guardrail_result"],
         model_arn=agent._MODEL_ID,
         input_tokens=result["input_tokens"],
         output_tokens=result["output_tokens"],

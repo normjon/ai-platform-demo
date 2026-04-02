@@ -51,7 +51,13 @@ def write(
         "input": user_input,
         "output": agent_output,
         "toolCalls": tool_calls,
-        "guardrailResult": guardrail_result,
+        # Lambda handler.py reads camelCase keys — convert from the snake_case
+        # dict returned by agent._extract_guardrail_result().
+        "guardrailResult": {
+            "action": guardrail_result.get("action", "NONE"),
+            "topicPolicyResult": guardrail_result.get("topic_policy_result", ""),
+            "contentFilterResult": guardrail_result.get("content_filter_result", ""),
+        },
         "modelArn": model_arn,
         "inputTokens": input_tokens,
         "outputTokens": output_tokens,

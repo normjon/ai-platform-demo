@@ -41,7 +41,10 @@ resource "aws_bedrockagentcore_agent_runtime" "dev" {
     AGENT_REGISTRY_TABLE = var.agent_registry_table
     LOG_LEVEL            = "INFO"
     # Structured JSON logging to stdout (ADR-003).
-    LOG_FORMAT = "json"
+    LOG_FORMAT           = "json"
+    # Prompt Vault write path — container invokes this Lambda asynchronously
+    # after every agent response (fire-and-forget, InvocationType=Event).
+    PROMPT_VAULT_LAMBDA  = var.prompt_vault_lambda_arn
   }
 
   tags = var.tags
