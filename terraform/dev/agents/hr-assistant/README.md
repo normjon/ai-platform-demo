@@ -243,8 +243,9 @@ python3 -c "import json; print(json.load(open('/tmp/response.json'))['response']
 
 ## Prompt Vault Write Path
 
-The Prompt Vault Lambda receives AgentCore post-invocation events and writes
-structured JSON interaction records to S3.
+After every agent invocation, `app/vault.py` invokes the Prompt Vault Lambda
+asynchronously (`InvocationType="Event"`) and returns without blocking. The Lambda
+writes a structured JSON interaction record to S3.
 
 **Lambda:** `hr-assistant-prompt-vault-writer-dev` (arm64, python3.12, 30s timeout)
 
@@ -252,11 +253,33 @@ structured JSON interaction records to S3.
 
 **Bucket:** `ai-platform-dev-prompt-vault-096305373014` (re-exported from platform)
 
+**Env var wiring:** The platform layer injects `PROMPT_VAULT_LAMBDA` into the
+AgentCore runtime via `data "aws_lambda_function" "prompt_vault_writer"` — the
+platform reads the Lambda ARN from AWS (not agent remote state) and passes it to
+`module.agentcore` as `prompt_vault_lambda_arn`. If `PROMPT_VAULT_LAMBDA` is unset,
+vault writes are silently skipped (logged as `vault_skip`).
+
+**Guardrail fields:** Every record includes `guardrailResult.action`. On happy-path
+queries, this field may be `GUARDRAIL_INTERVENED` with empty `topicPolicyResult` and
+`contentFilterResult` — this is correct when the guardrail applied PII anonymization
+(e.g. masking email/phone in the system prompt template) but did not block a topic.
+A `topicPolicyResult` value indicates an actual topic block (e.g. `legal-advice`).
+
 To query records for a given date:
 
 ```bash
 aws s3 ls s3://ai-platform-dev-prompt-vault-096305373014/prompt-vault/hr-assistant/$(date +%Y/%m/%d)/ \
   --region us-east-2
+```
+
+To fetch and inspect the latest record:
+
+```bash
+LATEST=$(aws s3 ls s3://ai-platform-dev-prompt-vault-096305373014/prompt-vault/hr-assistant/$(date +%Y/%m/%d)/ \
+  --region us-east-2 | sort | tail -1 | awk '{print $4}')
+aws s3 cp \
+  "s3://ai-platform-dev-prompt-vault-096305373014/prompt-vault/hr-assistant/$(date +%Y/%m/%d)/${LATEST}" \
+  - --region us-east-2 | python3 -m json.tool
 ```
 
 ---

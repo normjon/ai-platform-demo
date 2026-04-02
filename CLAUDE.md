@@ -633,6 +633,34 @@ When provisioning a Bedrock Knowledge Base backed by AOSS:
    uv run --with boto3 --with opensearch-py python3 scripts/create-os-index.py
    ```
 
+### Prompt Vault Lambda env var wiring
+
+The Prompt Vault Lambda ARN is injected into the AgentCore runtime via the
+`PROMPT_VAULT_LAMBDA` environment variable. The container reads this at startup
+in `app/vault.py`. If the variable is absent, vault writes are silently skipped
+(`vault_skip` log event) — the agent continues to function normally.
+
+The platform layer wires this using a data source rather than cross-layer state:
+
+```hcl
+# In terraform/dev/platform/main.tf — reads Lambda ARN without importing agent state
+data "aws_lambda_function" "prompt_vault_writer" {
+  function_name = "hr-assistant-prompt-vault-writer-dev"
+}
+
+module "agentcore" {
+  ...
+  prompt_vault_lambda_arn = data.aws_lambda_function.prompt_vault_writer.arn
+}
+```
+
+This preserves the `platform ← agents` dependency direction. The platform layer
+never reads agent remote state — only the agent layer reads platform remote state.
+
+**Prerequisite:** The Prompt Vault Lambda (`hr-assistant-prompt-vault-writer-dev`)
+must be deployed (agents layer applied) before running `terraform plan` in the
+platform layer, or the `data "aws_lambda_function"` lookup will fail.
+
 ---
 
 ## Security Requirements

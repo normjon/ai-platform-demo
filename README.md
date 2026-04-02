@@ -147,7 +147,32 @@ cd ../tools/glean
 terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
+
+# ---- Agents layer (each agent team runs their own) ----
+
+# 8. Apply the HR Assistant agent layer (provisions Prompt Vault Lambda, KB, guardrail, agent manifest)
+cp terraform/dev/agents/hr-assistant/terraform.tfvars.example terraform/dev/agents/hr-assistant/terraform.tfvars
+# Edit with your account values (model_arn, knowledge_base_id, etc.)
+cd ../agents/hr-assistant
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
+# After apply: run KB ingestion (see terraform/dev/agents/hr-assistant/README.md)
+
+# ---- Platform re-apply (wires Prompt Vault Lambda into AgentCore runtime) ----
+
+# 9. Re-apply platform layer — the platform reads the Prompt Vault Lambda ARN via
+#    data "aws_lambda_function" which requires the agents layer to be applied first.
+cd ../../platform
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
+
+> **Apply order note:** The agents layer must be applied before the final platform
+> apply because `data "aws_lambda_function" "prompt_vault_writer"` in `platform/main.tf`
+> reads the Prompt Vault Lambda ARN from AWS at plan time. If the Lambda does not exist,
+> the platform plan will fail. This is the one exception to the strict foundation →
+> platform → tools → agents ordering.
 
 ## Iterative Dev Cycle
 
