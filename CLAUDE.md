@@ -391,6 +391,10 @@ the layer directory before running any Terraform command.
   terraform apply tfplan
 
   # Teardown in reverse order:
+  # IMPORTANT: agents and tools MUST be destroyed before platform.
+  # platform/main.tf has data "aws_lambda_function" "prompt_vault_writer" which
+  # reads the Prompt Vault Lambda at plan time. If agents layer is not destroyed
+  # first (Lambda deleted), platform destroy will fail with ResourceNotFoundException.
 
   cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
   cd terraform/dev/tools/glean && terraform destroy -auto-approve
