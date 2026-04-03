@@ -60,13 +60,8 @@ does not require network access. If the submodule directory is empty, run:
 git submodule update --init --recursive
 ```
 
-Read the relevant domain folder CLAUDE.md before writing any code.
-Domain routing:
-- Provisioning AWS resources          → security/ then infrastructure/
-- Writing application or agent code   → application/ then ai-platform/
-- Setting up logging or monitoring    → observability/
-- Creating branches or pipeline jobs  → process/
-- Building or configuring agents      → ai-platform/
+Read `docs/adrs/CLAUDE.md` for domain routing and folder structure before
+writing any code.
 
 Critical rules from the ADR library (read the full ADR for rationale):
 - ADR-001 (security/):       Use IRSA for all AWS credential delivery.
