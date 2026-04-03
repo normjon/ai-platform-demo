@@ -92,6 +92,18 @@ terraform apply tfplan
 
 ## Pushing the Agent Container Image
 
+The ECR repository provisioned here is the long-lived image store for
+AgentCore agent containers. It lives in foundation so images survive
+platform destroy/apply cycles — agents do not need to be rebuilt every
+time platform is redeployed.
+
+AgentCore validates that a container image exists in ECR at the moment
+the runtime resource is created by Terraform. A valid arm64 image must
+be present before running `terraform apply` in the platform layer. For
+initial infrastructure validation, a plain `python:3.12-slim` placeholder
+satisfies this requirement. See the agent layer README for the real
+image build and push workflow.
+
 After foundation apply, push an arm64 image to ECR before applying the
 platform layer. The AgentCore runtime validates that the image exists at
 create time.
