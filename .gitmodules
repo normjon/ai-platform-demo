@@ -1,0 +1,3 @@
+[submodule "docs/adrs"]
+	path = docs/adrs
+	url = https://github.com/normjon/claude-foundation-best-practice

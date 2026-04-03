@@ -50,6 +50,16 @@ Layer READMEs:
 ### 3 — ADR Library
 
 Repository: https://github.com/normjon/claude-foundation-best-practice
+Local path: `docs/adrs/` (git submodule — read from here, do not WebFetch)
+
+The ADR library is mounted as a git submodule at `docs/adrs/`. Always read
+from the local path — it is faster, supports grep across all files, and
+does not require network access. If the submodule directory is empty, run:
+
+```bash
+git submodule update --init --recursive
+```
+
 Read the relevant domain folder CLAUDE.md before writing any code.
 Domain routing:
 - Provisioning AWS resources          → security/ then infrastructure/
@@ -738,6 +748,21 @@ this CLAUDE.md, the architecture document, or the ADR library:
    a new ADR in the ADR library, or a docs/ update as appropriate.
 4. Apply the update before proceeding. Do not carry undocumented
    decisions forward in the session without recording them.
+
+### ADR library updates
+
+When a gap or correction belongs in the ADR library (`docs/adrs/`),
+draft the change and present it to the engineer for review before
+submitting. Do not open a PR to the ADR library autonomously.
+
+ADRs are architectural decisions — they warrant deliberation, not
+in-session patches. The workflow is:
+
+1. Identify the gap and the affected ADR or domain folder.
+2. Draft the addition or correction in the conversation.
+3. Get explicit engineer approval on the content.
+4. Create a branch in `docs/adrs/`, apply the change, and open a PR
+   to `normjon/claude-foundation-best-practice` for review.
 
 ---
 
