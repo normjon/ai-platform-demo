@@ -7,5 +7,5 @@ account_id = "096305373014"
 # ECR image URI for the HR Assistant agent container.
 # Tag must be a git SHA — never use 'latest' (ADR-009).
 # Get the current value from: terraform output -raw ecr_repository_url (in foundation/)
-# Build and push an arm64 image first — see docs/agent-container.md.
+# Build and push an arm64 image first — see terraform/dev/agents/hr-assistant/README.md.
 agent_image_uri = "096305373014.dkr.ecr.us-east-2.amazonaws.com/ai-platform-dev-hr-assistant:<git-sha>"

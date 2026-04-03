@@ -151,7 +151,7 @@ for recently-GA'd AgentCore APIs.
 
 Full documentation on the HR Assistant container — purpose, arm64 requirement,
 placeholder vs real image, image tag policy, ECR repository, and rebuild
-workflow — is at `docs/agent-container.md`.
+workflow — is at `terraform/dev/agents/hr-assistant/README.md`.
 
 ## Building Python dependencies for arm64
 

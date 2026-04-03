@@ -125,7 +125,7 @@ echo "agent_image_uri = \"${IMAGE_URI}\""
 # Copy this value into terraform/dev/platform/terraform.tfvars
 ```
 
-See `docs/agent-container.md` for the real agent build workflow, arm64
+See `terraform/dev/agents/hr-assistant/README.md` for the real agent build workflow, arm64
 requirement, and tag policy.
 
 ---

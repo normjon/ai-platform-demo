@@ -153,6 +153,11 @@ Lambda logs are written to CloudWatch automatically:
 | --- | --- |
 | `/aws/lambda/ai-platform-dev-glean-stub` | Structured JSON — every MCP request and tool call |
 
+X-Ray tracing is enabled (`Active` mode). The Lambda execution role holds
+`xray:PutTraceSegments` and `xray:PutTelemetryRecords`. The handler annotates
+traces with `Platform = "ai-platform-dev"` and `Service = "glean-stub"` when
+`aws_xray_sdk` is present in the deployment package.
+
 Query for recent tool calls:
 
 ```bash
@@ -198,6 +203,28 @@ associated with it", destroy this layer first:
 ```bash
 cd terraform/dev/tools/glean && terraform destroy -auto-approve
 # Then retry platform destroy
+```
+
+If a gateway target exists outside Terraform state (e.g. from a failed apply),
+Terraform cannot delete it automatically. Remove orphaned targets manually:
+
+```bash
+GATEWAY_ID=$(cd ../platform && terraform output -raw agentcore_gateway_id)
+
+# List targets — response key is "items", not "gatewayTargets"
+aws bedrock-agentcore-control list-gateway-targets \
+  --gateway-identifier "${GATEWAY_ID}" --region us-east-2 \
+  --query 'items[].{targetId:targetId,name:name,status:status}' \
+  --output table
+
+# Delete each orphaned target
+aws bedrock-agentcore-control delete-gateway-target \
+  --gateway-identifier "${GATEWAY_ID}" \
+  --target-id <target-id> \
+  --region us-east-2
+
+# Then re-run platform destroy
+cd ../platform && terraform destroy -auto-approve
 ```
 
 **`list-gateway-targets` API response key is `items`, not `gatewayTargets`**
