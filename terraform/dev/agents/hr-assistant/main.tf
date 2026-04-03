@@ -165,11 +165,32 @@ resource "terraform_data" "hr_assistant_manifest" {
 # Component 4 — Prompt Vault Lambda Write Path
 # ---------------------------------------------------------------------------
 
-# Package the Lambda handler from the local prompt-vault/ directory.
+# Install aws_xray_sdk into prompt-vault/build/ then copy handler.py so the ZIP
+# contains the SDK alongside the handler. aws_xray_sdk is pure Python — no
+# cross-compilation required (ADR-004 platform flag only needed for C extensions).
+resource "null_resource" "prompt_vault_build" {
+  triggers = {
+    requirements = filemd5("${path.module}/prompt-vault/requirements.txt")
+    handler      = filemd5("${path.module}/prompt-vault/handler.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-CMD
+      uv pip install \
+        --target "${path.module}/prompt-vault/build" \
+        --quiet \
+        -r "${path.module}/prompt-vault/requirements.txt"
+      cp "${path.module}/prompt-vault/handler.py" "${path.module}/prompt-vault/build/handler.py"
+    CMD
+  }
+}
+
+# Package the Lambda from the build directory (includes aws_xray_sdk).
 data "archive_file" "prompt_vault_writer" {
   type        = "zip"
-  source_file = "${path.module}/prompt-vault/handler.py"
+  source_dir  = "${path.module}/prompt-vault/build"
   output_path = "${path.module}/prompt-vault/handler.zip"
+  depends_on  = [null_resource.prompt_vault_build]
 }
 
 # IAM execution role for the Prompt Vault writer — inline in agents/hr-assistant

@@ -64,10 +64,14 @@ Reads the following output from the platform layer via `terraform_remote_state`:
 
 ## First-Time Setup
 
+> **Note:** If you have an existing `.terraform/` directory from before the
+> `aws_xray_sdk` packaging was added, run `terraform init` again — the `null`
+> provider was added to `required_providers` and the lock file must be updated.
+
 ```bash
 cd terraform/dev/tools/glean
 
-# One-time per machine
+# One-time per machine (also re-run after provider additions)
 terraform init
 
 # Create tfvars
@@ -154,9 +158,10 @@ Lambda logs are written to CloudWatch automatically:
 | `/aws/lambda/ai-platform-dev-glean-stub` | Structured JSON — every MCP request and tool call |
 
 X-Ray tracing is enabled (`Active` mode). The Lambda execution role holds
-`xray:PutTraceSegments` and `xray:PutTelemetryRecords`. The handler annotates
-traces with `Platform = "ai-platform-dev"` and `Service = "glean-stub"` when
-`aws_xray_sdk` is present in the deployment package.
+`xray:PutTraceSegments` and `xray:PutTelemetryRecords`. `aws_xray_sdk` is
+packaged into the deployment ZIP (`modules/glean-stub/requirements.txt`) so
+the handler annotates traces with `Platform = "ai-platform-dev"` and
+`Service = "glean-stub"` on every invocation.
 
 Query for recent tool calls:
 
