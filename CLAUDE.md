@@ -63,29 +63,14 @@ git submodule update --init --recursive
 Read `docs/adrs/CLAUDE.md` for domain routing and folder structure before
 writing any code.
 
-Critical rules from the ADR library (read the full ADR for rationale):
-- ADR-001 (security/):       Use IRSA for all AWS credential delivery.
-                             Never use node instance profiles or env vars.
-- ADR-003 (observability/):  All logs must be structured JSON to stdout.
+Read `docs/adrs/CLAUDE.md` for global rules that apply across all projects
+(credentials, logging, image tags, branching, documentation, CI/CD applies).
+
+Project-specific ADR constraints for this repository:
 - ADR-004 (infrastructure/): All containers must target arm64/Graviton.
                              Build Python dependencies with explicit
                              platform targeting — never build on x86
                              for arm64 runtimes.
-- ADR-005 (infrastructure/): Use staged Terraform apply for
-                             CRD-dependent resources.
-- ADR-009 (application/):    Image tags must be git SHA. Never use
-                             'latest' in staging or production.
-- ADR-013 (process/):        GitFlow branching. Never commit directly
-                             to main or develop.
-- ADR-015 (process/):        Update README.md and CLAUDE.md in the
-                             same PR as any change that affects
-                             agent or infrastructure behaviour.
-- ADR-017 (infrastructure/): One state file per deployment layer per
-                             account in S3 with DynamoDB locking.
-                             Dev environment uses foundation/, platform/,
-                             tools/, and agents/ layers with separate
-                             state keys. Never share state across
-                             accounts or layers.
 - ADR-018 (security/):       Validate all MCP Gateway inputs against
                              declared JSON schema before execution.
 - ADR-021 (ai-platform/):    All agent repositories must follow the
