@@ -27,7 +27,7 @@ run on top of:
 ## Resources
 
 | Resource | What it creates |
-|---|---|
+| --- | --- |
 | `aws_iam_role.agentcore_runtime` | Runtime role assumed by `bedrock-agentcore.amazonaws.com` |
 | `aws_iam_role.bedrock_kb` | KB ingestion role assumed by `bedrock.amazonaws.com` |
 | `module.storage` | 2 S3 buckets + 2 DynamoDB tables (KMS encrypted) |
@@ -42,7 +42,7 @@ run on top of:
 ### Storage Resources
 
 | Resource | Name | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | S3 | `ai-platform-dev-document-landing-<account>` | Source documents for Knowledge Base ingestion |
 | S3 | `ai-platform-dev-prompt-vault-<account>` | Structured interaction records written by the Prompt Vault Lambda after every live agent invocation — versioned, KMS encrypted |
 | DynamoDB | `ai-platform-dev-session-memory` | AgentCore session state (partition: `session_id`, sort: `timestamp`) |
@@ -51,7 +51,7 @@ run on top of:
 ### Observability Resources
 
 | Resource | Name | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | CloudWatch Log Group | `/aws/agentcore/ai-platform-dev` | AgentCore runtime structured JSON logs |
 | CloudWatch Log Group | `/aws/bedrock/knowledge-base/ai-platform-dev` | Bedrock KB ingestion logs |
 | CloudWatch Alarm | `ai-platform-dev-agentcore-errors` | Fires on AgentCore error count > 0 |
@@ -64,7 +64,7 @@ run on top of:
 Reads the following outputs from foundation via `terraform_remote_state`:
 
 | Foundation output | Used for |
-|---|---|
+| --- | --- |
 | `vpc_id` | Re-exported in platform outputs |
 | `subnet_ids` | AgentCore runtime VPC placement |
 | `agentcore_sg_id` | AgentCore runtime security group |
@@ -80,7 +80,7 @@ These outputs are the interface contract consumed by tools and agents via
 all downstream layers.
 
 | Output | Description |
-|---|---|
+| --- | --- |
 | `agentcore_endpoint_id` | AgentCore runtime endpoint ID |
 | `agentcore_gateway_id` | MCP Gateway ID — tools register targets against this |
 | `vpc_id` | Re-exported from foundation |
@@ -103,7 +103,7 @@ all downstream layers.
 
 - Foundation layer applied. Run `terraform output` in `terraform/dev/foundation/`
   to confirm outputs are available.
-- Agent container image pushed to ECR. See `docs/agent-container.md`.
+- Agent container image pushed to ECR. See `terraform/dev/agents/hr-assistant/README.md`.
 - `terraform.tfvars` created with `agent_image_uri` set to the ECR URI of the
   pushed arm64 image.
 
@@ -198,7 +198,7 @@ if all five tests pass and 1 if any fail, making it suitable for CI/CD pipelines
 **Tests covered:**
 
 | Test | What it checks | Pass condition |
-|---|---|---|
+| --- | --- | --- |
 | 1 | AgentCore runtime status | `READY` |
 | 2 | MCP Gateway status, auth, protocol | `READY` + `AWS_IAM` + `MCP` |
 | 3 | Bedrock model invocation | Response contains `PASS` |
@@ -212,7 +212,7 @@ if all five tests pass and 1 if any fail, making it suitable for CI/CD pipelines
 ### CloudWatch Log Groups
 
 | Log group | Content |
-|---|---|
+| --- | --- |
 | `/aws/agentcore/ai-platform-dev` | Structured JSON from the AgentCore runtime. All agent invocations, tool calls, and errors appear here. |
 | `/aws/bedrock/knowledge-base/ai-platform-dev` | Bedrock KB ingestion job results. |
 
@@ -231,7 +231,7 @@ aws logs filter-log-events \
 ### CloudWatch Alarms
 
 | Alarm | Condition | Action |
-|---|---|---|
+| --- | --- | --- |
 | `ai-platform-dev-agentcore-errors` | Error count > 0 | Investigate `/aws/agentcore/ai-platform-dev` |
 | `ai-platform-dev-agentcore-p99-latency` | p99 latency above threshold | Check runtime configuration and model |
 
@@ -245,6 +245,28 @@ aws cloudwatch describe-alarms \
   --output table
 ```
 
+### X-Ray Tracing
+
+The platform layer provisions a sampling rule (`ai-platform-dev-default`) and a
+service group (`ai-platform-dev`) via `module.observability`. Individual Lambda
+functions activate tracing in their own layers:
+
+| Function | Layer |
+| --- | --- |
+| `ai-platform-dev-glean-stub` | `tools/glean/` |
+| `hr-assistant-prompt-vault-writer-dev` | `agents/hr-assistant/` |
+
+View traces:
+
+```bash
+aws xray get-trace-summaries \
+  --start-time $(date -v-1H +%s) \
+  --end-time $(date +%s) \
+  --region us-east-2 \
+  --query 'TraceSummaries[*].{id:Id,duration:Duration,status:ResponseTime}' \
+  --output table
+```
+
 ---
 
 ## OpenSearch Serverless Collection
@@ -254,7 +276,7 @@ by all agents with Knowledge Bases. Agents own their index within this collectio
 — they do not own the collection itself.
 
 | Property | Value |
-|---|---|
+| --- | --- |
 | Collection name | `ai-platform-kb-dev` |
 | Collection type | `VECTORSEARCH` |
 | Encryption | AWS-managed KMS |

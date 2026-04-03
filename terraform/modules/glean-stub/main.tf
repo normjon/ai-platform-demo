@@ -39,6 +39,10 @@ resource "aws_lambda_function" "glean_stub" {
     }
   }
 
+  tracing_config {
+    mode = "Active"
+  }
+
   tags = var.tags
 }
 

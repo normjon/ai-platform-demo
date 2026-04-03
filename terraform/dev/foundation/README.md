@@ -27,7 +27,7 @@ owned by the layer that uses them (platform/, tools/, agents/).
 ## Resources
 
 | Module / Resource | What it creates |
-|---|---|
+| --- | --- |
 | `module.networking` | VPC, 2 private subnets, route table, security group, 4 VPC endpoints |
 | `module.kms` | KMS CMK + alias + key policy |
 | `aws_ecr_repository.agent` | ECR repo for the HR Assistant container — IMMUTABLE tags |
@@ -35,7 +35,7 @@ owned by the layer that uses them (platform/, tools/, agents/).
 ### VPC Endpoints
 
 | Endpoint | Type | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `com.amazonaws.us-east-2.bedrock-runtime` | Interface | AgentCore model invocations stay within VPC |
 | `com.amazonaws.us-east-2.logs` | Interface | CloudWatch log writes stay within VPC |
 | `com.amazonaws.us-east-2.dynamodb` | Gateway | DynamoDB session memory stays within VPC |
@@ -50,7 +50,7 @@ Tools and agents do not read foundation outputs directly — they read from
 platform, which re-exports them.
 
 | Output | Description |
-|---|---|
+| --- | --- |
 | `vpc_id` | VPC ID |
 | `subnet_ids` | List of private subnet IDs |
 | `agentcore_sg_id` | Security group ID for the AgentCore runtime |
@@ -62,7 +62,7 @@ platform, which re-exports them.
 ## Prerequisites
 
 - AWS CLI configured with SSO credentials for account `096305373014` in `us-east-2`.
-  Run `awssandbox` to refresh if credentials have expired.
+  Run `aws sso login --profile <your-sso-profile>` to refresh if credentials have expired.
 - Terraform >= 1.6 installed. Use `tfenv` — `brew install terraform` provides
   a deprecated version.
 - Remote state bucket and lock table exist:
@@ -92,6 +92,18 @@ terraform apply tfplan
 
 ## Pushing the Agent Container Image
 
+The ECR repository provisioned here is the long-lived image store for
+AgentCore agent containers. It lives in foundation so images survive
+platform destroy/apply cycles — agents do not need to be rebuilt every
+time platform is redeployed.
+
+AgentCore validates that a container image exists in ECR at the moment
+the runtime resource is created by Terraform. A valid arm64 image must
+be present before running `terraform apply` in the platform layer. For
+initial infrastructure validation, a plain `python:3.12-slim` placeholder
+satisfies this requirement. See the agent layer README for the real
+image build and push workflow.
+
 After foundation apply, push an arm64 image to ECR before applying the
 platform layer. The AgentCore runtime validates that the image exists at
 create time.
@@ -113,7 +125,7 @@ echo "agent_image_uri = \"${IMAGE_URI}\""
 # Copy this value into terraform/dev/platform/terraform.tfvars
 ```
 
-See `docs/agent-container.md` for the real agent build workflow, arm64
+See `terraform/dev/agents/hr-assistant/README.md` for the real agent build workflow, arm64
 requirement, and tag policy.
 
 ---

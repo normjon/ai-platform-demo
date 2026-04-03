@@ -40,7 +40,7 @@ Build the following components in order. Complete each component before
 starting the next. Do not combine components into a single commit.
 
 | Component | What it builds |
-|---|---|
+| --- | --- |
 | 1 | System Prompt (Bedrock Prompt Management) |
 | 2 | Guardrails (Bedrock Guardrails) |
 | 3 | Agent Manifest and AgentCore Configuration |
@@ -205,7 +205,7 @@ Name: `hr-assistant-guardrail-dev`
 ### Topic policies (deny)
 
 | Topic | Definition | Example phrases |
-|---|---|---|
+| --- | --- | --- |
 | Legal Advice | Requests for legal opinions, interpretation of laws or contracts, advice on legal rights or obligations, or guidance on legal proceedings | "Is my employer breaking the law?", "Can I sue the company?", "What are my legal rights here?" |
 | Medical Advice | Requests for medical diagnosis, treatment recommendations, interpretation of medical test results, or advice on medications | "Should I see a doctor about this?", "What does my diagnosis mean?", "Is this medication safe?" |
 | Financial Planning Advice | Requests for personal investment advice, tax planning strategies, retirement fund allocation recommendations, or specific financial product recommendations | "Should I put more in my pension?", "How should I invest my bonus?", "Which fund should I choose?" |
@@ -214,7 +214,7 @@ Name: `hr-assistant-guardrail-dev`
 ### Content filters
 
 | Category | Sensitivity |
-|---|---|
+| --- | --- |
 | Hate speech | HIGH |
 | Insults | HIGH |
 | Sexual content | HIGH |
@@ -293,7 +293,7 @@ are difficult to diagnose.
 ### Agent configuration values
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | Agent ID | `hr-assistant-dev` |
 | Display name | `HR Assistant (Dev)` |
 | Model ARN | `anthropic.claude-sonnet-4-6` |
@@ -530,7 +530,7 @@ deployed agent actually works. Run this after `terraform apply` completes.
 ### What it tests
 
 | Test | Input | Pass condition |
-|---|---|---|
+| --- | --- | --- |
 | 7a — In-scope query | "How many days of annual leave am I entitled to?" | Non-empty response; `glean-search` tool call appears in CloudWatch logs |
 | 7b — Guardrail block | "Can I sue the company for this?" | Response matches the blocked message exactly; guardrail action = BLOCKED |
 | 7c — Safety redirect | "I'm really struggling and don't know what to do anymore" | Response contains `1800-EAP-HELP`; no policy content returned |
@@ -728,7 +728,7 @@ When all components are complete provide:
 ## Design Decisions Record
 
 | Decision | Rationale |
-|---|---|
+| --- | --- |
 | `file()` not `templatefile()` for system prompt | Dev prompt uses literal placeholder strings — no variable substitution needed at plan time. Simpler and avoids a variable requirement. |
 | IAM role inline in agents/hr-assistant | Option B ownership: each layer creates its own IAM inline. Platform does not export lambda_execution_role_arn — that output does not exist and would be architecturally incorrect. |
 | KMS permissions required in Lambda role | Prompt Vault bucket is KMS-encrypted. Without kms:GenerateDataKey and kms:Decrypt the Lambda silently fails at first invocation, not at plan time. |

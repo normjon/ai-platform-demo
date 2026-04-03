@@ -19,7 +19,7 @@ required.
 ## Resources
 
 | Resource | What it creates |
-|---|---|
+| --- | --- |
 | `aws_iam_role.glean_lambda` | Lambda execution role — CloudWatch logs only |
 | `aws_iam_role_policy.glean_lambda` | Inline policy scoped to `/aws/lambda/*` log groups |
 | `module.glean_stub` | Lambda function (arm64, Python 3.12) + Function URL |
@@ -28,7 +28,7 @@ required.
 ### Lambda Function
 
 | Attribute | Value |
-|---|---|
+| --- | --- |
 | Name | `ai-platform-dev-glean-stub` |
 | Runtime | Python 3.12, arm64 |
 | Timeout | 30s |
@@ -47,7 +47,7 @@ The Lambda implements the MCP JSON-RPC protocol:
 Reads the following output from the platform layer via `terraform_remote_state`:
 
 | Platform output | Used for |
-|---|---|
+| --- | --- |
 | `agentcore_gateway_id` | Registers `aws_bedrockagentcore_gateway_target` against the correct gateway |
 
 ---
@@ -139,7 +139,7 @@ arguments needed. It exits 0 if both tests pass and 1 if any fail.
 **Tests covered:**
 
 | Test | What it checks | Pass condition |
-|---|---|---|
+| --- | --- | --- |
 | 2a | Gateway target registered and status | `READY` |
 | 2b | Glean stub tool call via MCP JSON-RPC | Response contains `[STUB]` and query text |
 
@@ -150,8 +150,13 @@ arguments needed. It exits 0 if both tests pass and 1 if any fail.
 Lambda logs are written to CloudWatch automatically:
 
 | Log group | Content |
-|---|---|
+| --- | --- |
 | `/aws/lambda/ai-platform-dev-glean-stub` | Structured JSON — every MCP request and tool call |
+
+X-Ray tracing is enabled (`Active` mode). The Lambda execution role holds
+`xray:PutTraceSegments` and `xray:PutTelemetryRecords`. The handler annotates
+traces with `Platform = "ai-platform-dev"` and `Service = "glean-stub"` when
+`aws_xray_sdk` is present in the deployment package.
 
 Query for recent tool calls:
 
@@ -198,6 +203,28 @@ associated with it", destroy this layer first:
 ```bash
 cd terraform/dev/tools/glean && terraform destroy -auto-approve
 # Then retry platform destroy
+```
+
+If a gateway target exists outside Terraform state (e.g. from a failed apply),
+Terraform cannot delete it automatically. Remove orphaned targets manually:
+
+```bash
+GATEWAY_ID=$(cd ../platform && terraform output -raw agentcore_gateway_id)
+
+# List targets — response key is "items", not "gatewayTargets"
+aws bedrock-agentcore-control list-gateway-targets \
+  --gateway-identifier "${GATEWAY_ID}" --region us-east-2 \
+  --query 'items[].{targetId:targetId,name:name,status:status}' \
+  --output table
+
+# Delete each orphaned target
+aws bedrock-agentcore-control delete-gateway-target \
+  --gateway-identifier "${GATEWAY_ID}" \
+  --target-id <target-id> \
+  --region us-east-2
+
+# Then re-run platform destroy
+cd ../platform && terraform destroy -auto-approve
 ```
 
 **`list-gateway-targets` API response key is `items`, not `gatewayTargets`**

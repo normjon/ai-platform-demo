@@ -15,6 +15,12 @@ MCP protocol reference: https://spec.modelcontextprotocol.io
 import json
 import logging
 
+try:
+    from aws_xray_sdk.core import xray_recorder
+    _XRAY_ENABLED = True
+except ImportError:
+    _XRAY_ENABLED = False
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
@@ -66,6 +72,10 @@ def _error(request_id, code, message):
 
 
 def handler(event, context):
+    if _XRAY_ENABLED:
+        xray_recorder.put_annotation("Platform", "ai-platform-dev")
+        xray_recorder.put_annotation("Service", "glean-stub")
+
     logger.info(json.dumps({
         "level": "INFO",
         "message": "MCP request received",

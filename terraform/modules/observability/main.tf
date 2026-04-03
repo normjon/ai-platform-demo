@@ -49,3 +49,44 @@ resource "aws_cloudwatch_metric_alarm" "agentcore_latency" {
   treat_missing_data  = "notBreaching"
   tags                = var.tags
 }
+
+# ---------------------------------------------------------------------------
+# X-Ray — sampling rule and service group for distributed tracing.
+#
+# The sampling rule applies to all services in the account at 5% for dev
+# (reservoir_size = 1 guarantees one trace per second regardless of rate).
+# Priority 1000 sits below the X-Ray default rule (9999), so this rule
+# takes precedence for matching requests.
+#
+# The group scopes the CloudWatch ServiceMap view to platform Lambda traces.
+# Lambda functions enable tracing with tracing_config { mode = "Active" }
+# and must add xray:PutTraceSegments + xray:PutTelemetryRecords to their
+# execution roles. Those changes live in the tools/ and agents/ layers
+# that own the Lambda execution roles (ADR-017).
+#
+# To populate the group filter, Lambda handlers should call:
+#   xray_recorder.put_annotation("Platform", "<name_prefix>")
+# Without the annotation, traces are still sampled — they appear in the
+# X-Ray console but not in this group's ServiceMap view.
+# ---------------------------------------------------------------------------
+
+resource "aws_xray_sampling_rule" "platform" {
+  rule_name      = "${var.name_prefix}-default"
+  priority       = 1000
+  reservoir_size = 1
+  fixed_rate     = 0.05
+  url_path       = "*"
+  host           = "*"
+  http_method    = "*"
+  service_type   = "*"
+  service_name   = "*"
+  resource_arn   = "*"
+  version        = 1
+  tags           = var.tags
+}
+
+resource "aws_xray_group" "platform" {
+  group_name        = var.name_prefix
+  filter_expression = "annotation.Platform = \"${var.name_prefix}\""
+  tags              = var.tags
+}

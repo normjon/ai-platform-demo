@@ -72,12 +72,20 @@ resource "aws_iam_role_policy" "glean_lambda" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Sid    = "CloudWatchLogsWrite"
-      Effect = "Allow"
-      Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
-      Resource = ["arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/*:*"]
-    }]
+    Statement = [
+      {
+        Sid    = "CloudWatchLogsWrite"
+        Effect = "Allow"
+        Action = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:PutLogEvents"]
+        Resource = ["arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/*:*"]
+      },
+      {
+        Sid      = "XRayWrite"
+        Effect   = "Allow"
+        Action   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+        Resource = ["*"]
+      }
+    ]
   })
 }
 

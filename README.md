@@ -31,7 +31,7 @@ Full architecture documentation is at
 `docs/Enterprise_AI_Platform_Architecture.md`.
 
 Agent container documentation (arm64 requirement, image push, placeholder
-vs real image) is at `docs/agent-container.md`.
+vs real image) is at `terraform/dev/agents/hr-assistant/README.md`.
 
 ## Repository Structure
 ```
@@ -40,8 +40,6 @@ vs real image) is at `docs/agent-container.md`.
 ├── README.md              # This file
 └── docs/
 │   ├── Enterprise_AI_Platform_Architecture.md  # Full platform architecture
-│   ├── agent-container.md                      # arm64 image build, push, ECR, placeholder
-│   └── playbook-basic-test.md                  # Smoke tests and teardown runbook
 └── terraform/
     ├── dev/
     │   ├── foundation/         # Layer 1 — long-lived: VPC, KMS, ECR (platform team)
@@ -86,8 +84,11 @@ vs real image) is at `docs/agent-container.md`.
 
 Before running any Terraform commands:
 
-1. AWS CLI configured with SSO credentials for the dev account
-   (run `awssandbox` to refresh if credentials have expired)
+1. AWS CLI configured with SSO credentials for the dev account.
+   To refresh expired credentials:
+   ```bash
+   aws sso login --profile <your-sso-profile>
+   ```
 2. Terraform >= 1.6 installed
    (use `tfenv` — `brew install terraform` provides a deprecated version)
 3. S3 bucket and DynamoDB table for remote state created manually:
@@ -117,7 +118,7 @@ terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 
-# 4. Push an arm64 agent image to ECR (see docs/agent-container.md for full details)
+# 4. Push an arm64 agent image to ECR (see terraform/dev/foundation/README.md for full details)
 GIT_SHA=$(git rev-parse --short HEAD)
 ECR_URL=$(terraform output -raw ecr_repository_url)
 IMAGE_URI="${ECR_URL}:${GIT_SHA}"
@@ -188,7 +189,7 @@ terraform plan -out=tfplan
 terraform apply tfplan
 
 # Full platform cycle (destroys and recreates platform + all tools/agents)
-# Purge S3 versions first — see docs/playbook-basic-test.md S3 Known Issue
+# Purge S3 versions first — see terraform/dev/platform/README.md (Destroy section)
 cd terraform/dev/tools/glean && terraform destroy -auto-approve
 cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
 cd terraform/dev/platform && terraform destroy -auto-approve
@@ -199,7 +200,8 @@ cd terraform/dev/tools/glean && terraform plan -out=tfplan && terraform apply tf
 # If .terraform/ does not exist in a layer directory, run terraform init first.
 
 # Run smoke tests after any apply
-# See docs/playbook-basic-test.md
+# cd terraform/dev/platform && ./smoke-test.sh
+# cd terraform/dev/tools/glean && ./smoke-test.sh
 ```
 
 ## Teardown
@@ -212,7 +214,7 @@ cd terraform/dev/tools/glean && terraform destroy -auto-approve
 cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
 
 # Purge versioned S3 buckets before destroying platform
-# See docs/playbook-basic-test.md — S3 versioned buckets not empty
+# See terraform/dev/platform/README.md (Destroy section)
 
 # Then platform
 cd terraform/dev/platform && terraform destroy -auto-approve
@@ -221,8 +223,9 @@ cd terraform/dev/platform && terraform destroy -auto-approve
 cd terraform/dev/foundation && terraform destroy -auto-approve
 ```
 
-See `docs/playbook-basic-test.md` for known teardown issues (VPC endpoint ENIs,
-AgentCore VPC ENIs, S3 versioned bucket cleanup).
+See `terraform/dev/platform/README.md` and `terraform/dev/foundation/README.md`
+for known teardown issues (VPC endpoint ENIs, AgentCore VPC ENIs, S3 versioned
+bucket cleanup, orphaned gateway targets).
 
 ## Known Issues
 
@@ -251,7 +254,7 @@ library. Read the relevant ADR before making changes that affect
 the areas below.
 
 | Decision Area | ADR | Rule Summary |
-|---------------|-----|--------------|
+| --------------- | ----- | -------------- |
 | AWS credential delivery | ADR-001 | Use IRSA — never instance profiles or env vars |
 | Container architecture | ADR-004 | All containers must target arm64/Graviton |
 | Terraform state | ADR-017 | One state file per layer per account — foundation, platform, tools/*, agents/* are separate |

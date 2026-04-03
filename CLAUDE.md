@@ -1,6 +1,7 @@
 # CLAUDE.md — Enterprise AI Platform Infrastructure
 
 ## Primary Audience
+
 Claude Code agents. Human engineers are the secondary audience.
 All instructions are imperative commands. When these instructions
 conflict with a simpler or more obvious approach, follow these
@@ -9,6 +10,7 @@ instructions — the simpler approach was considered and rejected.
 ---
 
 ## Project Purpose
+
 This repository provisions the infrastructure for the Enterprise AI
 Platform built on AWS Bedrock, Amazon Bedrock AgentCore, and Glean.
 The platform is governed by two authoritative knowledge sources that
@@ -19,6 +21,7 @@ must be read before generating any resource, module, or configuration.
 ## Authoritative Knowledge Sources
 
 ### 1 — Architecture Document
+
 Location: docs/Enterprise_AI_Platform_Architecture.md
 Read this before designing any component. It defines the account
 structure, OU hierarchy, service catalogue, agent manifest schema,
@@ -28,6 +31,7 @@ or how to configure it, the architecture document is the source
 of truth.
 
 ### 2 — Layer README files
+
 Every Terraform layer has a README.md. Read the README.md of any
 layer you are working in or depending on before making changes.
 READMEs document current state, known issues, prerequisites, and
@@ -44,38 +48,29 @@ Layer READMEs:
 - terraform/dev/agents/hr-assistant/README.md
 
 ### 3 — ADR Library
-Repository: https://github.com/normjon/claude-foundation-best-practice
-Read the relevant domain folder CLAUDE.md before writing any code.
-Domain routing:
-- Provisioning AWS resources          → security/ then infrastructure/
-- Writing application or agent code   → application/ then ai-platform/
-- Setting up logging or monitoring    → observability/
-- Creating branches or pipeline jobs  → process/
-- Building or configuring agents      → ai-platform/
 
-Critical rules from the ADR library (read the full ADR for rationale):
-- ADR-001 (security/):       Use IRSA for all AWS credential delivery.
-                             Never use node instance profiles or env vars.
-- ADR-003 (observability/):  All logs must be structured JSON to stdout.
+Repository: https://github.com/normjon/claude-foundation-best-practice
+Local path: `docs/adrs/` (git submodule — read from here, do not WebFetch)
+
+The ADR library is mounted as a git submodule at `docs/adrs/`. Always read
+from the local path — it is faster, supports grep across all files, and
+does not require network access. If the submodule directory is empty, run:
+
+```bash
+git submodule update --init --recursive
+```
+
+Read `docs/adrs/CLAUDE.md` for domain routing and folder structure before
+writing any code.
+
+Read `docs/adrs/CLAUDE.md` for global rules that apply across all projects
+(credentials, logging, image tags, branching, documentation, CI/CD applies).
+
+Project-specific ADR constraints for this repository:
 - ADR-004 (infrastructure/): All containers must target arm64/Graviton.
                              Build Python dependencies with explicit
                              platform targeting — never build on x86
                              for arm64 runtimes.
-- ADR-005 (infrastructure/): Use staged Terraform apply for
-                             CRD-dependent resources.
-- ADR-009 (application/):    Image tags must be git SHA. Never use
-                             'latest' in staging or production.
-- ADR-013 (process/):        GitFlow branching. Never commit directly
-                             to main or develop.
-- ADR-015 (process/):        Update README.md and CLAUDE.md in the
-                             same PR as any change that affects
-                             agent or infrastructure behaviour.
-- ADR-017 (infrastructure/): One state file per deployment layer per
-                             account in S3 with DynamoDB locking.
-                             Dev environment uses foundation/, platform/,
-                             tools/, and agents/ layers with separate
-                             state keys. Never share state across
-                             accounts or layers.
 - ADR-018 (security/):       Validate all MCP Gateway inputs against
                              declared JSON schema before execution.
 - ADR-021 (ai-platform/):    All agent repositories must follow the
@@ -84,6 +79,7 @@ Critical rules from the ADR library (read the full ADR for rationale):
 ---
 
 ## External Reference Libraries
+
 Read these before generating AgentCore or Bedrock resource definitions:
 - AgentCore Terraform samples:
   https://github.com/awslabs/amazon-bedrock-agentcore-samples/tree/main/04-infrastructure-as-code/terraform
@@ -102,6 +98,7 @@ Follow these four steps in order when writing Terraform for any
 AgentCore or Bedrock resource. Do not skip steps.
 
 ### Step 1 — Fetch the AWS Labs baseline
+
 Fetch and read the relevant pattern from the AgentCore samples
 repository before writing any resource definitions. Do not rely
 on training knowledge for AgentCore resource definitions —
@@ -122,6 +119,7 @@ arguments, and dependency relationships. Use it as the baseline —
 not as a copy-paste source.
 
 ### Step 2 — Adapt to platform standards
+
 After reading the sample, apply these constraints before writing
 any code:
 
@@ -175,6 +173,7 @@ Service modules receive bucket names and table names as
 input variables.
 
 ### Step 4 — Use consistent variable names
+
 Use these variable names across all modules so wiring between
 deployment layers and modules is predictable and readable:
 
@@ -189,6 +188,7 @@ deployment layers and modules is predictable and readable:
 ---
 
 ## Dev Environment Scope
+
 This repository currently provisions the DEV environment only.
 The dev environment is a single AWS account — not the full
 multi-account production topology described in the architecture
@@ -196,6 +196,7 @@ document. Build only what is listed here. Do not provision
 staging or production resources.
 
 ### In scope for dev (Phase 1 + Phase 2 complete):
+
 - Single AWS account with Bedrock enabled in us-east-2
 - VPC with private subnets and PrivateLink endpoints
   for Bedrock and AgentCore
@@ -212,6 +213,7 @@ staging or production resources.
 - 8 HR policy documents in document landing S3 bucket
 
 ### Deferred (do not provision):
+
 - Real Glean MCP endpoint (stub Lambda used in dev)
 - Multi-account AWS Organizations structure
 - Production or staging AgentCore endpoints
@@ -243,7 +245,9 @@ independently without touching platform or foundation.
                       Independently deployable per agent team.
 
 ### Never apply layers out of order.
+
 ### Never collapse layers into a single root module.
+
 ### Each layer must have its own backend.tf and state key.
 
 ### Directory layout:
@@ -391,6 +395,10 @@ the layer directory before running any Terraform command.
   terraform apply tfplan
 
   # Teardown in reverse order:
+  # IMPORTANT: agents and tools MUST be destroyed before platform.
+  # platform/main.tf has data "aws_lambda_function" "prompt_vault_writer" which
+  # reads the Prompt Vault Lambda at plan time. If agents layer is not destroyed
+  # first (Lambda deleted), platform destroy will fail with ResourceNotFoundException.
 
   cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
   cd terraform/dev/tools/glean && terraform destroy -auto-approve
@@ -404,6 +412,7 @@ terraform apply autonomously.
 ---
 
 ## Terraform State Configuration
+
 Each deployment layer has its own state file in S3 with DynamoDB locking.
 ADR-017 rule applied as: one state file per deployment layer per account.
 You must create the S3 bucket and DynamoDB table manually before
@@ -424,6 +433,7 @@ or across layers within the same environment.
 ---
 
 ## Approved Bedrock Model ARNs
+
 Only these model ARNs may be used in any Terraform resource,
 agent manifest, or application code in this repository:
 
@@ -460,6 +470,7 @@ Without it, the runtime receives `AccessDeniedException` even when
 ---
 
 ## ARM64 / Graviton Requirement
+
 All container images and Lambda functions must target arm64.
 AgentCore runtimes run on Graviton. Building Python dependencies
 on x86 causes silent import errors at runtime — not build errors.
@@ -510,7 +521,7 @@ to start and operate. Missing any one causes `i/o timeout` at startup
 or at first tool invocation — not a startup error:
 
 | Endpoint | Reason |
-|---|---|
+| --- | --- |
 | `ecr.api` | Container image manifest pull |
 | `ecr.dkr` | Container image layer download |
 | `bedrock-agent` | KB retrieval API |
@@ -664,6 +675,7 @@ platform layer, or the `data "aws_lambda_function"` lookup will fail.
 ---
 
 ## Security Requirements
+
 - All S3 buckets must have public access blocked and versioning enabled
 - All DynamoDB tables must use KMS encryption
 - All Lambda functions must use IRSA-scoped execution roles
@@ -678,6 +690,7 @@ platform layer, or the `data "aws_lambda_function"` lookup will fail.
 ---
 
 ## Commit Granularity
+
 Commit infrastructure changes at module granularity — one commit
 per module when building the initial scaffold, one commit per
 logical change when modifying existing modules.
@@ -705,6 +718,7 @@ Examples:
 ---
 
 ## Documentation Gap Resolution
+
 If at any point you cannot find complete, unambiguous guidance in
 this CLAUDE.md, the architecture document, or the ADR library:
 
@@ -715,9 +729,25 @@ this CLAUDE.md, the architecture document, or the ADR library:
 4. Apply the update before proceeding. Do not carry undocumented
    decisions forward in the session without recording them.
 
+### ADR library updates
+
+When a gap or correction belongs in the ADR library (`docs/adrs/`),
+draft the change and present it to the engineer for review before
+submitting. Do not open a PR to the ADR library autonomously.
+
+ADRs are architectural decisions — they warrant deliberation, not
+in-session patches. The workflow is:
+
+1. Identify the gap and the affected ADR or domain folder.
+2. Draft the addition or correction in the conversation.
+3. Get explicit engineer approval on the content.
+4. Create a branch in `docs/adrs/`, apply the change, and open a PR
+   to `normjon/claude-foundation-best-practice` for review.
+
 ---
 
 ## Definition of Done — Dev Environment
+
 The dev environment is considered operational when:
 - terraform apply completes with zero errors
 - The HR Assistant test agent can be invoked end-to-end through
