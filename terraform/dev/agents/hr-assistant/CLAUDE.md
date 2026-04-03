@@ -377,7 +377,8 @@ prompt-vault/       Lambda handler for writing interaction records to S3
 scripts/            create-os-index.py — pre-creates OpenSearch vector index
 test/               Golden dataset (15 test cases)
 smoke-test.sh       6 integration tests — run after every apply
-main.tf             All resources for this layer
+main.tf             Infrastructure wiring — system prompt, manifest, Prompt Vault Lambda, KB
+guardrail.tf        Guardrail policies — topic denials, content filters, PII handling
 variables.tf        Input variables (model_arn default = us.anthropic.claude-sonnet-4-6)
 outputs.tf          knowledge_base_id, knowledge_base_data_source_id, etc.
 ```
