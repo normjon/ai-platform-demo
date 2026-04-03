@@ -432,6 +432,12 @@ Prompt Vault Lambda logs:
 /aws/lambda/hr-assistant-prompt-vault-writer-dev
 ```
 
+X-Ray tracing is enabled (`Active` mode) on the Prompt Vault Lambda. The
+execution role holds `xray:PutTraceSegments` and `xray:PutTelemetryRecords`.
+The handler annotates traces with `Platform = "ai-platform-dev"` and
+`Service = "prompt-vault-writer"`, and calls `patch_all()` so S3 writes appear
+as subsegments when `aws_xray_sdk` is present in the deployment package.
+
 ---
 
 ## Known Issues

@@ -21,6 +21,13 @@ from datetime import datetime, timezone
 import boto3
 from botocore.exceptions import ClientError
 
+try:
+    from aws_xray_sdk.core import patch_all, xray_recorder
+    patch_all()  # patches boto3 so S3 calls appear as X-Ray subsegments
+    _XRAY_ENABLED = True
+except ImportError:
+    _XRAY_ENABLED = False
+
 # ---------------------------------------------------------------------------
 # Structured JSON logging (ADR-003)
 # ---------------------------------------------------------------------------
@@ -67,6 +74,10 @@ def handler(event: dict, context: object) -> dict:
       "latencyMs":      int
     }
     """
+    if _XRAY_ENABLED:
+        xray_recorder.put_annotation("Platform", "ai-platform-dev")
+        xray_recorder.put_annotation("Service", "prompt-vault-writer")
+
     start_time = time.monotonic()
 
     session_id = event.get("sessionId", "unknown")

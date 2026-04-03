@@ -103,7 +103,7 @@ all downstream layers.
 
 - Foundation layer applied. Run `terraform output` in `terraform/dev/foundation/`
   to confirm outputs are available.
-- Agent container image pushed to ECR. See `docs/agent-container.md`.
+- Agent container image pushed to ECR. See `terraform/dev/agents/hr-assistant/README.md`.
 - `terraform.tfvars` created with `agent_image_uri` set to the ECR URI of the
   pushed arm64 image.
 
@@ -242,6 +242,28 @@ aws cloudwatch describe-alarms \
   --alarm-name-prefix ai-platform-dev \
   --region us-east-2 \
   --query 'MetricAlarms[].{name:AlarmName,state:StateValue}' \
+  --output table
+```
+
+### X-Ray Tracing
+
+The platform layer provisions a sampling rule (`ai-platform-dev-default`) and a
+service group (`ai-platform-dev`) via `module.observability`. Individual Lambda
+functions activate tracing in their own layers:
+
+| Function | Layer |
+| --- | --- |
+| `ai-platform-dev-glean-stub` | `tools/glean/` |
+| `hr-assistant-prompt-vault-writer-dev` | `agents/hr-assistant/` |
+
+View traces:
+
+```bash
+aws xray get-trace-summaries \
+  --start-time $(date -v-1H +%s) \
+  --end-time $(date +%s) \
+  --region us-east-2 \
+  --query 'TraceSummaries[*].{id:Id,duration:Duration,status:ResponseTime}' \
   --output table
 ```
 
