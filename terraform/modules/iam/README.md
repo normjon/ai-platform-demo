@@ -21,7 +21,7 @@ It is applied once and survives app layer destroy/apply cycles.
 ## Roles Created
 
 | Role | Name Pattern | Trust Principal | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | AgentCore Runtime | `{project}-agentcore-runtime-{env}` | `bedrock-agentcore.amazonaws.com` | Invokes Bedrock models, writes AgentCore logs, reads/writes session memory |
 | Bedrock KB | `{project}-bedrock-kb-{env}` | `bedrock.amazonaws.com` | Reads source documents from S3 for future Knowledge Base ingestion |
 | Lambda Execution | `{project}-lambda-{env}` | `lambda.amazonaws.com` | Evaluation and ingestion Lambda functions — scoped to platform resources |
@@ -29,7 +29,7 @@ It is applied once and survives app layer destroy/apply cycles.
 ## Input Variables
 
 | Name | Type | Required | Description |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `project_name` | `string` | Yes | Project name — used in all resource names |
 | `environment` | `string` | Yes | Environment name (dev, staging, production) |
 | `aws_region` | `string` | Yes | AWS region — used in model ARNs and log group ARNs within policies |
@@ -44,7 +44,7 @@ It is applied once and survives app layer destroy/apply cycles.
 ## Outputs
 
 | Name | Description |
-|---|---|
+| --- | --- |
 | `agentcore_runtime_role_arn` | AgentCore runtime role ARN — passed to the agentcore/ module |
 | `agentcore_runtime_role_name` | AgentCore runtime role name |
 | `bedrock_kb_role_arn` | Bedrock KB ingestion role ARN — passed to the bedrock/ module when re-enabled |

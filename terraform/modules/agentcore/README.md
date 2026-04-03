@@ -5,7 +5,7 @@ AgentCore runtime endpoint and MCP Gateway for the dev environment.
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_bedrockagentcore_agent_runtime.dev` | Single dev runtime endpoint. Private VPC mode. arm64/Graviton. |
 | `aws_bedrockagentcore_gateway.mcp` | MCP Gateway that brokers tool calls from agent to registered tools. |
 
@@ -22,7 +22,7 @@ how to transition to a real Glean endpoint.
 ## Input Variables
 
 | Variable | Type | Description |
-|---|---|---|
+| --- | --- | --- |
 | `name_prefix` | string | Prefix for all resource names |
 | `aws_region` | string | AWS region |
 | `account_id` | string | AWS account ID |
@@ -45,7 +45,7 @@ source pointed at `hr-assistant-prompt-vault-writer-dev`. This keeps the depende
 ## Critical constraints
 
 | Constraint | Rule | ADR |
-|---|---|---|
+| --- | --- | --- |
 | Architecture | Container must target `arm64`. Never `x86_64`. | ADR-004 |
 | Image tag | Must be a git SHA. Never `latest`. | ADR-009 |
 | Network | `assign_public_ip = false`. AgentCore endpoint is private in dev. | CLAUDE.md |

@@ -7,7 +7,7 @@ then query (ADR-003).
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_cloudwatch_log_group.agentcore` | Receives all AgentCore invocation logs. |
 | `aws_cloudwatch_log_group.bedrock_kb` | Receives Bedrock Knowledge Base ingestion and retrieval logs. |
 | `aws_cloudwatch_metric_alarm.agentcore_errors` | Fires when AgentCore error count exceeds 5 in a 5-minute window. |

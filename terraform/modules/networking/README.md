@@ -6,7 +6,7 @@ keep all platform traffic on the AWS network.
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_vpc` | Platform VPC with DNS resolution enabled. |
 | `aws_subnet.private` | One private subnet per AZ. AgentCore and Lambda run here. No public subnets — no public internet exposure. |
 | `aws_security_group.agentcore` | Restricts AgentCore runtime to HTTPS egress only. No inbound rules. |
@@ -16,7 +16,7 @@ keep all platform traffic on the AWS network.
 ## Inputs
 
 | Name | Description |
-|---|---|
+| --- | --- |
 | `name_prefix` | Prefix for all resource names. |
 | `vpc_cidr` | VPC CIDR block. |
 | `private_subnet_cidrs` | One CIDR per AZ (minimum two). |
@@ -25,7 +25,7 @@ keep all platform traffic on the AWS network.
 ## Outputs
 
 | Name | Description |
-|---|---|
+| --- | --- |
 | `vpc_id` | VPC ID consumed by other modules. |
 | `subnet_ids` | Subnet IDs passed to the agentcore module. |
 | `agentcore_sg_id` | Security group ID passed to the AgentCore module. |

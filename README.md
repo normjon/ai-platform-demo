@@ -251,7 +251,7 @@ library. Read the relevant ADR before making changes that affect
 the areas below.
 
 | Decision Area | ADR | Rule Summary |
-|---------------|-----|--------------|
+| --------------- | ----- | -------------- |
 | AWS credential delivery | ADR-001 | Use IRSA — never instance profiles or env vars |
 | Container architecture | ADR-004 | All containers must target arm64/Graviton |
 | Terraform state | ADR-017 | One state file per layer per account — foundation, platform, tools/*, agents/* are separate |

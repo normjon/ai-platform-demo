@@ -32,7 +32,7 @@ platform and foundation layers:
 ## Resources
 
 | Resource | Name | Purpose |
-|---|---|---|
+| --- | --- | --- |
 | `aws_bedrockagent_prompt` | `hr-assistant-system-prompt-dev` | System prompt stored in Bedrock Prompt Management |
 | `aws_bedrock_guardrail` | `hr-assistant-guardrail-dev` | Topic policies, content filters, PII anonymization |
 | `terraform_data` (local-exec) | — | Registers agent manifest (with KB ID) in DynamoDB agent registry |
@@ -60,7 +60,7 @@ The dev prompt contains literal placeholder strings that must be replaced
 before promoting to staging or production:
 
 | Placeholder | Replace with |
-|---|---|
+| --- | --- |
 | `[COMPANY_NAME]` | The organisation's legal trading name |
 | `hr@example.com` | The real HR team contact email address |
 | `1800-EAP-HELP` | The real Employee Assistance Programme phone number |
@@ -76,7 +76,7 @@ update in place.
 **Guardrail ID:** resolved via `terraform output -raw guardrail_id`
 
 | Category | Configuration |
-|---|---|
+| --- | --- |
 | Topic policies (DENY) | Legal Advice, Medical Advice, Financial Planning Advice, Employee Personal Information |
 | Content filters | HATE/INSULTS/SEXUAL/VIOLENCE = HIGH; MISCONDUCT = MEDIUM |
 | PII anonymization | NAME, EMAIL, PHONE, ADDRESS, AGE, SSN, CREDIT_DEBIT_CARD_NUMBER, US_BANK_ACCOUNT_NUMBER |
@@ -110,7 +110,7 @@ Expected: `action = GUARDRAIL_INTERVENED`, topic `Legal Advice` detected and blo
 **Documents indexed:** 8 HR policy markdown files from `kb-docs/`:
 
 | File | Content |
-|---|---|
+| --- | --- |
 | `annual-leave-policy.md` | 25 days entitlement, carry-over, booking rules |
 | `sick-leave-policy.md` | SSP, enhanced sick pay tiers by service length |
 | `parental-leave-policy.md` | Maternity (52 weeks), paternity (2 weeks), SPL |
@@ -291,7 +291,7 @@ aws s3 cp \
 15 test cases covering:
 
 | Category | Count |
-|---|---|
+| --- | --- |
 | In-scope (annual leave, sick leave, parental leave, remote working, expenses, performance review, EAP, benefits) | 8 |
 | Out-of-scope (legal advice, employee personal information, medical advice, financial planning) | 4 |
 | Edge cases (ambiguous conflict query, PII in input, employee distress) | 3 |
@@ -306,7 +306,7 @@ Each case includes: `id`, `category`, `input`, `expected_behaviour`, `tool_expec
 Reads the following outputs from the platform layer via `terraform_remote_state`:
 
 | Platform output | Used for |
-|---|---|
+| --- | --- |
 | `agentcore_endpoint_id` | Agent manifest registration, re-exported for smoke test |
 | `agentcore_gateway_id` | Agent manifest registration |
 | `agent_registry_table` | DynamoDB agent registry target for local-exec |
@@ -388,7 +388,7 @@ cd terraform/dev/agents/hr-assistant
 **Tests covered (Phase 2):**
 
 | Test | What it checks | Pass condition |
-|---|---|---|
+| --- | --- | --- |
 | 7a | Live AgentCore invocation — annual leave question | Response contains "25" (KB-grounded from annual-leave-policy.md) |
 | 7b | Guardrail blocks legal advice input | `action = GUARDRAIL_INTERVENED`; topic `Legal Advice` detected |
 | 7c | Live AgentCore invocation — distress prompt | Response contains `1800-EAP-HELP` (EAP safety redirect) |
@@ -483,7 +483,7 @@ during Phase 2 build — the agent CLAUDE.md has the full diagnostic context.
 **Check CloudWatch first** — log group: `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT`
 
 | Symptom in logs | Root cause | Fix |
-|---|---|---|
+| --- | --- | --- |
 | No logs at all after invocation | Container failed to start — missing VPC endpoint or SG rule | Add missing endpoint; fix SG (see below) |
 | `dial tcp 3.x.x.x:443: i/o timeout` | Missing VPC endpoint or SG blocking traffic to S3/ECR | Add prefix-list egress rules to AgentCore SG (not VPC CIDR) |
 | `AccessDeniedException` | IAM role missing permission | Compare failing action against platform pre-flight checklist |

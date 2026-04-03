@@ -18,14 +18,14 @@ endpoint value — this module and Lambda do not need to change.
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_lambda_function.glean_stub` | arm64 Python 3.12 Lambda. Handles MCP `initialize`, `tools/list`, `tools/call`. |
 | `aws_lambda_function_url.glean_stub` | Public HTTPS endpoint (`authorization_type = NONE`). Required for the gateway to reach the stub. |
 
 ## MCP Protocol Handled
 
 | Method | Response |
-|---|---|
+| --- | --- |
 | `initialize` | Returns protocol version `2024-11-05` and tool capabilities |
 | `notifications/initialized` | Returns HTTP 200 empty body (notification, no JSON-RPC response) |
 | `tools/list` | Returns the `search` tool with its input schema |

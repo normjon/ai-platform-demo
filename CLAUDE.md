@@ -514,7 +514,7 @@ to start and operate. Missing any one causes `i/o timeout` at startup
 or at first tool invocation — not a startup error:
 
 | Endpoint | Reason |
-|---|---|
+| --- | --- |
 | `ecr.api` | Container image manifest pull |
 | `ecr.dkr` | Container image layer download |
 | `bedrock-agent` | KB retrieval API |

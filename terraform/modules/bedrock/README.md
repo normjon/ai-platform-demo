@@ -6,7 +6,7 @@ vector store, and the default Guardrail applied to all agent invocations.
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_opensearchserverless_collection.kb` | Vector search collection backing the Knowledge Base index. |
 | `aws_opensearchserverless_security_policy.encryption` | Encryption policy — AWS-owned key for dev. Upgrade to CMK for production. |
 | `aws_opensearchserverless_security_policy.network` | Network policy — private access only, no public endpoint. |

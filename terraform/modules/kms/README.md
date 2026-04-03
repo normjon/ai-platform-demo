@@ -15,7 +15,7 @@ be decrypted if the key is destroyed while data is in place.
 ## Resources
 
 | Resource | Purpose |
-|---|---|
+| --- | --- |
 | `aws_kms_key.storage` | CMK — 30-day deletion window, automatic key rotation enabled. |
 | `aws_kms_alias.storage` | Human-readable alias: `alias/<project>-<env>-storage`. |
 | `aws_kms_key_policy.storage` | Root account IAM delegation + CloudWatch Logs service grant. |
