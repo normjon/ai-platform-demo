@@ -9,16 +9,37 @@
 # value with the real Glean MCP URL when it becomes available — no Lambda
 # or module changes are required.
 #
-# ADR-004: arm64 architecture. No native Python dependencies so cross-compile
-#          is not required — the standard Lambda runtime handles pure Python.
+# ADR-004: arm64 architecture. aws_xray_sdk is the only dependency and is pure
+#          Python — no cross-compilation required (ADR-004 flag only for C extensions).
 # ADR-001: Lambda execution role is passed in from the iam/ module (IRSA).
 # ADR-003: Structured JSON logging to stdout.
 # ---------------------------------------------------------------------------
 
+# Install aws_xray_sdk into build/ then copy handler.py so the ZIP contains
+# the SDK alongside the handler. aws_xray_sdk is pure Python — no
+# cross-compilation required (ADR-004 platform flag only needed for C extensions).
+resource "null_resource" "lambda_build" {
+  triggers = {
+    requirements = filemd5("${path.module}/requirements.txt")
+    handler      = filemd5("${path.module}/handler.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-CMD
+      uv pip install \
+        --target "${path.module}/build" \
+        --quiet \
+        -r "${path.module}/requirements.txt"
+      cp "${path.module}/handler.py" "${path.module}/build/handler.py"
+    CMD
+  }
+}
+
 data "archive_file" "lambda" {
   type        = "zip"
-  source_file = "${path.module}/handler.py"
+  source_dir  = "${path.module}/build"
   output_path = "${path.module}/glean-stub.zip"
+  depends_on  = [null_resource.lambda_build]
 }
 
 resource "aws_lambda_function" "glean_stub" {

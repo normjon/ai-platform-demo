@@ -12,6 +12,8 @@ override.tf.json
 
 # Lambda build artefacts
 *.zip
+terraform/modules/glean-stub/build/
+terraform/dev/agents/hr-assistant/prompt-vault/build/
 
 # Secrets
 *.pem
