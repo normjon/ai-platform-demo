@@ -29,7 +29,7 @@ reference.
 **Prerequisites**
 
 - AWS CLI configured with SSO credentials for account `096305373014` in
-  `us-east-2`. Run `awssandbox` to refresh if credentials have expired.
+  `us-east-2`. Run `aws sso login --profile <your-sso-profile>` to refresh if credentials have expired.
 - `jq` and `python3` available in your shell.
 - Terraform outputs available: run `terraform output` from `terraform/dev/platform/`
   for platform outputs (gateway ID, endpoint ID, tables, buckets). Run from

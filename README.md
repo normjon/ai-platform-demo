@@ -86,8 +86,11 @@ vs real image) is at `docs/agent-container.md`.
 
 Before running any Terraform commands:
 
-1. AWS CLI configured with SSO credentials for the dev account
-   (run `awssandbox` to refresh if credentials have expired)
+1. AWS CLI configured with SSO credentials for the dev account.
+   To refresh expired credentials:
+   ```bash
+   aws sso login --profile <your-sso-profile>
+   ```
 2. Terraform >= 1.6 installed
    (use `tfenv` — `brew install terraform` provides a deprecated version)
 3. S3 bucket and DynamoDB table for remote state created manually:

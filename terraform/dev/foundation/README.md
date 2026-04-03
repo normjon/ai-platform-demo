@@ -62,7 +62,7 @@ platform, which re-exports them.
 ## Prerequisites
 
 - AWS CLI configured with SSO credentials for account `096305373014` in `us-east-2`.
-  Run `awssandbox` to refresh if credentials have expired.
+  Run `aws sso login --profile <your-sso-profile>` to refresh if credentials have expired.
 - Terraform >= 1.6 installed. Use `tfenv` — `brew install terraform` provides
   a deprecated version.
 - Remote state bucket and lock table exist:
