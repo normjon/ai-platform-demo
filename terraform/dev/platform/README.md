@@ -207,6 +207,71 @@ if all five tests pass and 1 if any fail, making it suitable for CI/CD pipelines
 
 ---
 
+## Quality Pipeline
+
+The platform runs an LLM-as-Judge quality scorer that automatically evaluates
+every interaction record written to the Prompt Vault. It fires hourly via
+EventBridge, invokes Claude Haiku to score each interaction on five quality
+dimensions, and writes results to DynamoDB.
+
+### Resources
+
+| Resource | Name | Purpose |
+| --- | --- | --- |
+| DynamoDB | `ai-platform-dev-quality-records` | Quality score records (PK: `record_id`, SK: `scored_at`) |
+| Lambda | `ai-platform-dev-quality-scorer` | Scorer function (arm64, 512MB, 5min timeout) |
+| CloudWatch Log Group | `/aws/lambda/ai-platform-dev-quality-scorer` | Scorer logs (30 day retention) |
+| EventBridge Rule | `ai-platform-dev-quality-scorer-schedule` | Hourly trigger |
+| CloudWatch Alarm | `ai-platform-dev-quality-below-threshold` | BelowThreshold > 3 per hour |
+| CloudWatch Alarm | `ai-platform-dev-quality-scorer-errors` | Lambda Errors >= 1 per hour |
+
+### Invoke manually
+
+```bash
+aws lambda invoke \
+  --function-name ai-platform-dev-quality-scorer \
+  --region us-east-2 \
+  --log-type Tail \
+  --query 'LogResult' --output text \
+  /tmp/scorer-response.json | base64 -d
+```
+
+### Query quality records
+
+```bash
+# All records for a specific agent
+aws dynamodb query \
+  --table-name ai-platform-dev-quality-records \
+  --index-name agent-threshold-index \
+  --key-condition-expression "agent_id = :aid" \
+  --expression-attribute-values '{":aid": {"S": "hr-assistant-dev"}}' \
+  --region us-east-2 \
+  --query 'Items[*].{id:record_id.S,score:score_overall.S,below:below_threshold.BOOL}'
+
+# Below-threshold records only
+aws dynamodb query \
+  --table-name ai-platform-dev-quality-records \
+  --index-name agent-threshold-index \
+  --key-condition-expression "agent_id = :aid AND below_threshold_str = :bt" \
+  --expression-attribute-values '{":aid": {"S": "hr-assistant-dev"}, ":bt": {"S": "true"}}' \
+  --region us-east-2
+```
+
+### Scoring dimensions
+
+| Dimension | What it measures |
+| --- | --- |
+| correctness | Factual accuracy — penalises hallucinations and contradictions with retrieved content |
+| relevance | Addresses the question asked — penalises off-topic responses |
+| groundedness | Grounded in retrieved docs/tool output — penalises parametric knowledge responses |
+| completeness | Fully answers the question — penalises partial answers |
+| tone | Professional and concise — penalises jargon, excessive length, or casual register |
+
+Overall score is the mean of the five dimensions. Records with `score_overall < 0.70` are
+flagged `below_threshold = true` and queryable via the `agent-threshold-index` GSI.
+
+---
+
 ## Observability
 
 ### CloudWatch Log Groups
