@@ -127,6 +127,7 @@ resource "terraform_data" "hr_assistant_manifest" {
     data.terraform_remote_state.platform.outputs.agentcore_gateway_id,
     var.model_arn,
     aws_bedrockagent_knowledge_base.hr_policies.id,
+    "an enterprise HR Assistant that answers employee questions about HR policies, benefits, and workplace procedures",
   ]
 
   provisioner "local-exec" {
