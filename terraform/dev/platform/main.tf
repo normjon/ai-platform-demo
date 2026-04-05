@@ -637,3 +637,29 @@ resource "aws_lambda_function" "quality_scorer" {
 
   tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer" })
 }
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — EventBridge hourly schedule
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_event_rule" "quality_scorer" {
+  name                = "${local.name_prefix}-quality-scorer-schedule"
+  description         = "Triggers quality scorer to evaluate new Prompt Vault records hourly."
+  schedule_expression = "rate(1 hour)"
+  state               = "ENABLED"
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer-schedule" })
+}
+
+resource "aws_cloudwatch_event_target" "quality_scorer" {
+  rule = aws_cloudwatch_event_rule.quality_scorer.name
+  arn  = aws_lambda_function.quality_scorer.arn
+}
+
+resource "aws_lambda_permission" "quality_scorer_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.quality_scorer.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.quality_scorer.arn
+}
