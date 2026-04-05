@@ -74,9 +74,6 @@ def handler(event: dict, context: object) -> dict:
       "latencyMs":      int
     }
     """
-    if _XRAY_ENABLED:
-        xray_recorder.put_annotation("Platform", "ai-platform-dev")
-        xray_recorder.put_annotation("Service", "prompt-vault-writer")
 
     start_time = time.monotonic()
 

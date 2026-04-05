@@ -175,8 +175,16 @@ def _score_record(record, agent_description, bedrock):
     latency_ms = int((time.monotonic() - t0) * 1000)
 
     raw_text = response["output"]["message"]["content"][0]["text"]
+    # Strip markdown code fences if the model wrapped the JSON in ```json ... ```
+    stripped = raw_text.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]  # drop first line (```json or ```)
+        stripped = stripped.rsplit("```", 1)[0]  # drop trailing ```
+        stripped = stripped.strip()
+    else:
+        stripped = raw_text
     try:
-        parsed = json.loads(raw_text)
+        parsed = json.loads(stripped)
     except json.JSONDecodeError:
         logger.warning(json.dumps({
             "event": "score_parse_failed",

@@ -439,7 +439,7 @@ agent manifest, or application code in this repository:
 
   Region (all environments):  us-east-2
   Primary reasoning (dev):    anthropic.claude-sonnet-4-6
-  Evaluation/scoring:         anthropic.claude-haiku-4-5-20251001
+  Evaluation/scoring:         us.anthropic.claude-haiku-4-5-20251001-v1:0
   Embeddings:                 amazon.titan-embed-text-v2:0
 
 All Bedrock and AgentCore resources must be provisioned in us-east-2.

@@ -543,7 +543,10 @@ resource "aws_iam_role_policy" "quality_scorer" {
         Sid    = "BedrockHaikuInvoke"
         Effect = "Allow"
         Action = ["bedrock:InvokeModel"]
-        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-haiku-4-5-20251001"
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}:${var.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*::foundation-model/*",
+        ]
       },
       {
         Sid      = "CloudWatchMetrics"
@@ -623,7 +626,7 @@ resource "aws_lambda_function" "quality_scorer" {
     variables = {
       PROMPT_VAULT_BUCKET  = local.prompt_vault_bucket_name
       QUALITY_TABLE        = local.quality_records_table_name
-      SCORER_MODEL_ARN     = "anthropic.claude-haiku-4-5-20251001"
+      SCORER_MODEL_ARN     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
       SCORE_THRESHOLD      = "0.70"
       ENVIRONMENT          = var.environment
       AGENT_REGISTRY_TABLE = local.agent_registry_table_name
