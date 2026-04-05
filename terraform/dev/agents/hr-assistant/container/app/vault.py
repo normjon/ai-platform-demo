@@ -4,6 +4,11 @@ Prompt Vault write path — invokes the Prompt Vault Lambda after each interacti
 The Lambda writes structured interaction records to S3 at:
   prompt-vault/hr-assistant/YYYY/MM/DD/<record_id>.json
 
+The Lambda ARN is read from the agent registry at container startup and
+passed to init(). The platform layer has no knowledge of this Lambda —
+each agent owns its Prompt Vault writer and registers the ARN in its
+own registry manifest under prompt_vault_lambda_arn.
+
 ADR-003: structured JSON logging to stdout.
 """
 
@@ -19,7 +24,17 @@ import boto3
 logger = logging.getLogger(__name__)
 
 _lambda = boto3.client("lambda", region_name=os.environ.get("AWS_REGION", "us-east-2"))
-_VAULT_LAMBDA = os.environ.get("PROMPT_VAULT_LAMBDA", "")
+_VAULT_LAMBDA = ""  # set by init() called from main.startup()
+
+
+def init(lambda_arn: str) -> None:
+    """
+    Set the Prompt Vault Lambda ARN. Called once at container startup
+    after the agent registry is loaded. Writes are silently skipped
+    if this is never called or called with an empty string.
+    """
+    global _VAULT_LAMBDA
+    _VAULT_LAMBDA = lambda_arn
 
 
 def write(

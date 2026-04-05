@@ -6,6 +6,14 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -29,7 +37,10 @@ locals {
   prompt_vault_bucket_name     = "${local.name_prefix}-prompt-vault-${var.account_id}"
   session_memory_table_name    = "${local.name_prefix}-session-memory"
   agent_registry_table_name    = "${local.name_prefix}-agent-registry"
-  agentcore_log_group_arn      = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
+  quality_records_table_name   = "${local.name_prefix}-quality-records"
+  agentcore_log_group_arn           = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
+  quality_scorer_log_group_name     = "/aws/lambda/${local.name_prefix}-quality-scorer"
+  quality_scorer_log_group_arn      = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.name_prefix}-quality-scorer"
 }
 
 # ---------------------------------------------------------------------------
@@ -211,14 +222,23 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
         ]
       },
       {
-        # Lambda: invoke Glean stub MCP tool and Prompt Vault writer.
-        Sid    = "LambdaInvoke"
+        # Lambda: invoke platform MCP tools (glean-stub and future tools).
+        # Tool Lambdas follow the naming convention: ${name_prefix}-<tool-name>.
+        Sid    = "LambdaInvokePlatformTools"
         Effect = "Allow"
         Action = ["lambda:InvokeFunction"]
-        Resource = [
-          "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:ai-platform-dev-glean-stub",
-          "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:hr-assistant-prompt-vault-writer-dev",
-        ]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:${local.name_prefix}-*"
+      },
+      {
+        # Lambda: invoke agent Prompt Vault writers.
+        # Each agent layer grants a resource-based permission (aws_lambda_permission)
+        # on its own Prompt Vault Lambda for this role. This IAM statement covers
+        # the identity side using the shared naming convention *-prompt-vault-writer-*.
+        # Adding a new agent requires no platform changes — only the agents layer.
+        Sid    = "LambdaInvokePromptVaultWriters"
+        Effect = "Allow"
+        Action = ["lambda:InvokeFunction"]
+        Resource = "arn:aws:lambda:${var.aws_region}:${var.account_id}:function:*-prompt-vault-writer-*"
       },
       {
         # KMS: decrypt DynamoDB and S3 data encrypted with the platform KMS key.
@@ -386,28 +406,302 @@ resource "aws_opensearchserverless_collection" "kb" {
   tags = merge(local.common_tags, { Component = "opensearch" })
 }
 
-# Prompt Vault Lambda — owned by agents/hr-assistant layer.
-# Read via data source so the platform layer never imports agent remote state
-# (dependency direction is always platform ← agents, never platform → agents).
-data "aws_lambda_function" "prompt_vault_writer" {
-  function_name = "hr-assistant-prompt-vault-writer-dev"
-}
-
 module "agentcore" {
   source = "../../modules/agentcore"
 
-  name_prefix             = local.name_prefix
-  aws_region              = var.aws_region
-  account_id              = var.account_id
-  model_arn_primary       = var.model_arn_primary
-  agent_image_uri         = var.agent_image_uri
-  ecr_repository_url      = data.terraform_remote_state.foundation.outputs.ecr_repository_url
-  subnet_ids              = data.terraform_remote_state.foundation.outputs.subnet_ids
-  agentcore_sg_id         = data.terraform_remote_state.foundation.outputs.agentcore_sg_id
-  session_memory_table    = module.storage.session_memory_table
-  agent_registry_table    = module.storage.agent_registry_table
-  agentcore_role_arn      = aws_iam_role.agentcore_runtime.arn
-  log_group_agentcore     = module.observability.log_group_agentcore
-  prompt_vault_lambda_arn = data.aws_lambda_function.prompt_vault_writer.arn
-  tags                    = local.common_tags
+  name_prefix          = local.name_prefix
+  aws_region           = var.aws_region
+  account_id           = var.account_id
+  model_arn_primary    = var.model_arn_primary
+  agent_image_uri      = var.agent_image_uri
+  ecr_repository_url   = data.terraform_remote_state.foundation.outputs.ecr_repository_url
+  subnet_ids           = data.terraform_remote_state.foundation.outputs.subnet_ids
+  agentcore_sg_id      = data.terraform_remote_state.foundation.outputs.agentcore_sg_id
+  session_memory_table = module.storage.session_memory_table
+  agent_registry_table = module.storage.agent_registry_table
+  agentcore_role_arn   = aws_iam_role.agentcore_runtime.arn
+  log_group_agentcore  = module.observability.log_group_agentcore
+  tags                 = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — LLM-as-Judge pipeline
+#
+# Processes Prompt Vault records hourly via EventBridge, invokes Haiku to
+# score each interaction across five dimensions, and writes results here.
+# All quality scorer resources are inline in this layer per the spec —
+# no new modules.
+# ---------------------------------------------------------------------------
+
+resource "aws_dynamodb_table" "quality_records" {
+  name         = local.quality_records_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "record_id"
+  range_key    = "scored_at"
+
+  attribute {
+    name = "record_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "scored_at"
+    type = "S"
+  }
+
+  attribute {
+    name = "agent_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "below_threshold_str"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  global_secondary_index {
+    name            = "agent-threshold-index"
+    hash_key        = "agent_id"
+    range_key       = "below_threshold_str"
+    projection_type = "ALL"
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+  }
+
+  tags = merge(local.common_tags, { Name = local.quality_records_table_name })
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer Lambda — IAM role, log group, build, and function.
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "quality_scorer" {
+  name              = local.quality_scorer_log_group_name
+  retention_in_days = 30
+  kms_key_id        = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+
+  tags = merge(local.common_tags, { Name = local.quality_scorer_log_group_name })
+}
+
+resource "aws_iam_role" "quality_scorer" {
+  name        = "${local.name_prefix}-quality-scorer"
+  description = "Quality scorer Lambda role: reads Prompt Vault, scores with Haiku, writes quality records."
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "AllowLambdaAssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer" })
+}
+
+resource "aws_iam_role_policy" "quality_scorer" {
+  name = "${local.name_prefix}-quality-scorer-policy"
+  role = aws_iam_role.quality_scorer.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "PromptVaultRead"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}",
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}/*",
+        ]
+      },
+      {
+        Sid    = "AgentRegistryRead"
+        Effect = "Allow"
+        Action = ["dynamodb:GetItem"]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}"
+      },
+      {
+        Sid    = "QualityRecordsWrite"
+        Effect = "Allow"
+        Action = ["dynamodb:PutItem", "dynamodb:Query"]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.quality_records_table_name}",
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.quality_records_table_name}/index/*",
+        ]
+      },
+      {
+        Sid    = "BedrockHaikuInvoke"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = [
+          "arn:aws:bedrock:${var.aws_region}:${var.account_id}:inference-profile/*",
+          "arn:aws:bedrock:*::foundation-model/*",
+        ]
+      },
+      {
+        Sid      = "CloudWatchMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = [
+          local.quality_scorer_log_group_arn,
+          "${local.quality_scorer_log_group_arn}:*",
+        ]
+      },
+      {
+        Sid    = "KMSDecrypt"
+        Effect = "Allow"
+        Action = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+      },
+      {
+        Sid      = "XRayTracing"
+        Effect   = "Allow"
+        Action   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "null_resource" "quality_scorer_build" {
+  triggers = {
+    requirements = filemd5("${path.module}/quality-scorer/requirements.txt")
+    handler      = filemd5("${path.module}/quality-scorer/handler.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-CMD
+      uv pip install \
+        --python-platform aarch64-manylinux2014 \
+        --python-version "3.12" \
+        --target "${path.module}/quality-scorer/build" \
+        --only-binary=:all: \
+        --quiet \
+        -r "${path.module}/quality-scorer/requirements.txt"
+      cp "${path.module}/quality-scorer/handler.py" "${path.module}/quality-scorer/build/handler.py"
+    CMD
+  }
+}
+
+data "archive_file" "quality_scorer" {
+  type        = "zip"
+  source_dir  = "${path.module}/quality-scorer/build"
+  output_path = "${path.module}/quality-scorer/quality-scorer.zip"
+  depends_on  = [null_resource.quality_scorer_build]
+}
+
+resource "aws_lambda_function" "quality_scorer" {
+  function_name    = "${local.name_prefix}-quality-scorer"
+  filename         = data.archive_file.quality_scorer.output_path
+  source_code_hash = data.archive_file.quality_scorer.output_base64sha256
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  architectures    = ["arm64"]
+  role             = aws_iam_role.quality_scorer.arn
+  memory_size      = 512
+  timeout          = 300
+  description      = "LLM-as-Judge quality scorer — evaluates Prompt Vault records hourly using Haiku."
+
+  environment {
+    variables = {
+      PROMPT_VAULT_BUCKET  = local.prompt_vault_bucket_name
+      QUALITY_TABLE        = local.quality_records_table_name
+      SCORER_MODEL_ARN     = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+      SCORE_THRESHOLD      = "0.70"
+      ENVIRONMENT          = var.environment
+      AGENT_REGISTRY_TABLE = local.agent_registry_table_name
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.quality_scorer]
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer" })
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — EventBridge hourly schedule
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_event_rule" "quality_scorer" {
+  name                = "${local.name_prefix}-quality-scorer-schedule"
+  description         = "Triggers quality scorer to evaluate new Prompt Vault records hourly."
+  schedule_expression = "rate(1 hour)"
+  state               = "ENABLED"
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer-schedule" })
+}
+
+resource "aws_cloudwatch_event_target" "quality_scorer" {
+  rule = aws_cloudwatch_event_rule.quality_scorer.name
+  arn  = aws_lambda_function.quality_scorer.arn
+}
+
+resource "aws_lambda_permission" "quality_scorer_eventbridge" {
+  statement_id  = "AllowEventBridgeInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.quality_scorer.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.quality_scorer.arn
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — CloudWatch alarms
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_metric_alarm" "quality_below_threshold" {
+  alarm_name          = "${local.name_prefix}-quality-below-threshold"
+  alarm_description   = "More than 3 responses below quality threshold in 1 hour."
+  namespace           = "AIPlatform/Quality"
+  metric_name         = "BelowThreshold"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 3
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-below-threshold" })
+}
+
+resource "aws_cloudwatch_metric_alarm" "quality_scorer_errors" {
+  alarm_name          = "${local.name_prefix}-quality-scorer-errors"
+  alarm_description   = "Quality scorer Lambda encountered errors."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.quality_scorer.function_name
+  }
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer-errors" })
 }

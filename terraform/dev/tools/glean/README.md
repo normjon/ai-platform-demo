@@ -159,9 +159,8 @@ Lambda logs are written to CloudWatch automatically:
 
 X-Ray tracing is enabled (`Active` mode). The Lambda execution role holds
 `xray:PutTraceSegments` and `xray:PutTelemetryRecords`. `aws_xray_sdk` is
-packaged into the deployment ZIP (`modules/glean-stub/requirements.txt`) so
-the handler annotates traces with `Platform = "ai-platform-dev"` and
-`Service = "glean-stub"` on every invocation.
+packaged into the deployment ZIP (`modules/glean-stub/requirements.txt`) and
+`patch_all()` instruments outbound botocore calls.
 
 Query for recent tool calls:
 
@@ -241,3 +240,52 @@ aws bedrock-agentcore-control list-gateway-targets \
   --query 'items[].{targetId:targetId,name:name,status:status}' \
   --output table
 ```
+
+---
+
+**Gateway target reaches FAILED state — ConflictException on re-apply**
+
+If the Glean stub Lambda crashes at startup (e.g. an unhandled exception in
+the handler before it can respond to MCP `initialize`), the gateway target
+creation times out and reaches `FAILED` state. AWS does not auto-delete a
+FAILED target.
+
+On the next `terraform apply`, the creation attempt raises:
+```
+ConflictException: A target with name 'glean-stub' already exists in this gateway
+```
+
+Recovery:
+```bash
+GATEWAY_ID=$(cd ../platform && terraform output -raw agentcore_gateway_id)
+
+# Find the target ID
+aws bedrock-agentcore-control list-gateway-targets \
+  --gateway-identifier "${GATEWAY_ID}" --region us-east-2 \
+  --query 'items[?name==`glean-stub`].{id:targetId,status:status}' \
+  --output table
+
+# Delete it (wait for DELETING → gone before re-applying)
+aws bedrock-agentcore-control delete-gateway-target \
+  --gateway-identifier "${GATEWAY_ID}" \
+  --target-id <target-id> \
+  --region us-east-2
+
+# Confirm deleted
+aws bedrock-agentcore-control list-gateway-targets \
+  --gateway-identifier "${GATEWAY_ID}" --region us-east-2 \
+  --query 'items[?name==`glean-stub`]'
+
+# Re-plan and apply
+terraform plan -out=tfplan && terraform apply tfplan
+```
+
+**Root cause prevention:** Ensure the Lambda handler starts and responds to
+`initialize` before registering the gateway target. Test the Lambda URL
+directly before applying this layer:
+```bash
+curl -s -X POST <function-url> \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
+```
+Expected: JSON response with `result.serverInfo.name = "glean-stub"`.

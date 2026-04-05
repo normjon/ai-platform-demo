@@ -43,6 +43,8 @@ RUNTIME_ID=$(terraform output -raw agentcore_endpoint_id 2>/dev/null) || {
 GATEWAY_ID=$(terraform output -raw agentcore_gateway_id)
 SESSION_TABLE=$(terraform output -raw session_memory_table)
 DOCUMENT_BUCKET=$(terraform output -raw document_landing_bucket)
+QUALITY_TABLE=$(terraform output -raw quality_records_table)
+QUALITY_SCORER=$(terraform output -raw quality_scorer_function_name)
 REGION="us-east-2"
 TEST_TS="smoke-$(date +%s)"
 
@@ -168,6 +170,107 @@ if [ "${SSE}" = "aws:kms" ]; then
   pass "S3 object encrypted with aws:kms"
 else
   fail "S3 SSE algorithm = ${SSE}  (expected aws:kms)"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 6 — Quality records table accessible (write / read / delete)
+# ---------------------------------------------------------------------------
+
+echo "Test 6 — Quality Records DynamoDB Table"
+QUALITY_ITEM_KEY="{\"record_id\":{\"S\":\"${TEST_TS}\"},\"scored_at\":{\"S\":\"2026-01-01T00:00:00Z\"}}"
+QUALITY_ITEM="{\"record_id\":{\"S\":\"${TEST_TS}\"},\"scored_at\":{\"S\":\"2026-01-01T00:00:00Z\"},\"agent_id\":{\"S\":\"smoke-test\"},\"below_threshold\":{\"BOOL\":false},\"below_threshold_str\":{\"S\":\"false\"}}"
+
+aws dynamodb put-item \
+  --table-name "${QUALITY_TABLE}" \
+  --region "${REGION}" \
+  --item "${QUALITY_ITEM}" > /dev/null 2>&1
+
+QUALITY_READ=$(aws dynamodb get-item \
+  --table-name "${QUALITY_TABLE}" \
+  --region "${REGION}" \
+  --key "${QUALITY_ITEM_KEY}" \
+  --query 'Item.agent_id.S' \
+  --output text 2>/dev/null || echo "ERROR")
+
+aws dynamodb delete-item \
+  --table-name "${QUALITY_TABLE}" \
+  --region "${REGION}" \
+  --key "${QUALITY_ITEM_KEY}" > /dev/null 2>&1
+
+if [ "${QUALITY_READ}" = "smoke-test" ]; then
+  pass "Quality records table write/read/delete — table: ${QUALITY_TABLE}"
+else
+  fail "Quality records table read returned: ${QUALITY_READ}  (expected smoke-test)"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 7 — Quality scorer Lambda invocable and emits batch summary log
+# ---------------------------------------------------------------------------
+
+echo "Test 7 — Quality Scorer Lambda Invocation"
+SCORER_RESPONSE_FILE="/tmp/platform-smoke-scorer-${TEST_TS}.json"
+
+aws lambda invoke \
+  --function-name "${QUALITY_SCORER}" \
+  --region "${REGION}" \
+  --log-type Tail \
+  --query 'LogResult' \
+  --output text \
+  "${SCORER_RESPONSE_FILE}" 2>/dev/null \
+  | base64 -d > "/tmp/platform-smoke-scorer-log-${TEST_TS}.txt" 2>/dev/null
+
+SCORER_STATUS_CODE=$(aws lambda invoke \
+  --function-name "${QUALITY_SCORER}" \
+  --region "${REGION}" \
+  --query 'StatusCode' \
+  --output text \
+  "/dev/null" 2>/dev/null || echo "0")
+
+BATCH_EVENT=$(grep -o '"event"[[:space:]]*:[[:space:]]*"scoring_batch_complete"' \
+  "/tmp/platform-smoke-scorer-log-${TEST_TS}.txt" 2>/dev/null || echo "")
+
+rm -f "${SCORER_RESPONSE_FILE}" "/tmp/platform-smoke-scorer-log-${TEST_TS}.txt"
+
+if [ "${SCORER_STATUS_CODE}" = "200" ] && [ -n "${BATCH_EVENT}" ]; then
+  pass "Quality scorer invoked successfully — batch summary log confirmed"
+elif [ "${SCORER_STATUS_CODE}" = "200" ]; then
+  fail "Quality scorer returned 200 but batch summary log not found in tail output"
+else
+  fail "Quality scorer invocation failed — status code: ${SCORER_STATUS_CODE}"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8 — EventBridge schedule rule is ENABLED
+# ---------------------------------------------------------------------------
+
+echo "Test 8 — EventBridge Schedule"
+EB_STATE=$(aws events describe-rule \
+  --name "${QUALITY_SCORER}-schedule" \
+  --region "${REGION}" \
+  --query 'State' \
+  --output text 2>/dev/null || echo "ERROR")
+
+if [ "${EB_STATE}" = "ENABLED" ]; then
+  pass "EventBridge rule ENABLED — ${QUALITY_SCORER}-schedule"
+else
+  fail "EventBridge rule state = ${EB_STATE}  (expected ENABLED)"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 9 — Quality scorer CloudWatch alarms exist
+# ---------------------------------------------------------------------------
+
+echo "Test 9 — Quality Scorer CloudWatch Alarms"
+ALARM_COUNT=$(aws cloudwatch describe-alarms \
+  --alarm-name-prefix "${QUALITY_SCORER%-quality-scorer}-quality-" \
+  --region "${REGION}" \
+  --query 'length(MetricAlarms)' \
+  --output text 2>/dev/null || echo "0")
+
+if [ "${ALARM_COUNT}" -ge "2" ]; then
+  pass "Quality scorer alarms present — ${ALARM_COUNT} alarm(s) found"
+else
+  fail "Quality scorer alarms not found — expected 2, got ${ALARM_COUNT}"
 fi
 
 # ---------------------------------------------------------------------------

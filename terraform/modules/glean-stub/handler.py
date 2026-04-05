@@ -72,10 +72,6 @@ def _error(request_id, code, message):
 
 
 def handler(event, context):
-    if _XRAY_ENABLED:
-        xray_recorder.put_annotation("Platform", "ai-platform-dev")
-        xray_recorder.put_annotation("Service", "glean-stub")
-
     logger.info(json.dumps({
         "level": "INFO",
         "message": "MCP request received",

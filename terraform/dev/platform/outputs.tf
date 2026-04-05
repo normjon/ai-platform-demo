@@ -85,3 +85,19 @@ output "opensearch_collection_name" {
   description = "AOSS collection name — referenced in agent data access policy resource strings."
   value       = aws_opensearchserverless_collection.kb.name
 }
+
+# Quality scorer outputs
+output "quality_records_table" {
+  description = "DynamoDB table name for LLM-as-Judge quality scores."
+  value       = aws_dynamodb_table.quality_records.name
+}
+
+output "quality_scorer_function_name" {
+  description = "Quality scorer Lambda function name — for manual invocation."
+  value       = aws_lambda_function.quality_scorer.function_name
+}
+
+output "quality_scorer_log_group" {
+  description = "CloudWatch log group for the quality scorer Lambda."
+  value       = aws_cloudwatch_log_group.quality_scorer.name
+}

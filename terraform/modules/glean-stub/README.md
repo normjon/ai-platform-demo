@@ -44,25 +44,55 @@ When a live Glean MCP endpoint is ready:
 
 2. Delete the stub gateway target:
    ```bash
-   GATEWAY_ID=$(cd terraform/dev/app && terraform output -raw agentcore_gateway_id)
+   GATEWAY_ID=$(cd terraform/dev/tools/glean && terraform output -raw gateway_target_id && cd ../platform && terraform output -raw agentcore_gateway_id)
    aws bedrock-agentcore-control delete-gateway-target \
      --gateway-identifier "${GATEWAY_ID}" \
      --target-id <stub-target-id> \
      --region us-east-2
    ```
 
-3. Update `terraform/dev/app/main.tf` — change the gateway target `endpoint`
+3. Update `terraform/dev/tools/glean/main.tf` — change the gateway target `endpoint`
    from `module.glean_stub.function_url` to the real Glean URL.
 
-4. Apply the app layer. The new target will be registered against the real endpoint.
+4. Apply the tools/glean layer. The new target will be registered against the real endpoint.
 
-5. Remove this module call from `app/main.tf` once the real target is verified READY.
+5. Remove this module call from `tools/glean/main.tf` once the real target is verified READY.
 
 ## Security Notes
 
 - `authorization_type = NONE` makes the Function URL publicly accessible.
   This is intentional for a stub returning mock data. The real Glean endpoint
   will use proper authentication configured at the Glean side.
-- The Lambda execution role is scoped to the minimum permissions required
-  (Bedrock Haiku invocation, S3, DynamoDB) — it cannot access production data.
+- The Lambda execution role is scoped to CloudWatch log writes and X-Ray
+  telemetry only — no Bedrock, S3, or DynamoDB access is granted. The stub
+  returns only static mock text and makes no AWS API calls at runtime.
 - The stub returns only static mock text — no real data, no external calls.
+
+## Known Pitfalls
+
+**X-Ray FacadeSegment crash**
+
+Do NOT call `xray_recorder.put_annotation()` or `xray_recorder.put_metadata()`
+directly in the handler function. Lambda's X-Ray runtime creates a
+`FacadeSegment` before the handler runs, and `FacadeSegments` cannot be
+mutated. Any such call raises:
+
+```
+FacadeSegmentMutationException: FacadeSegments cannot be mutated.
+```
+
+The handler crashes immediately and returns HTTP 500. The gateway sees the
+error response as an MCP server failure, and the gateway target creation
+times out in `FAILED` state.
+
+The `patch_all()` call at module level and `tracing_config { mode = "Active" }`
+on the Lambda resource are sufficient for Lambda X-Ray instrumentation.
+Do not add annotation calls to the handler.
+
+**Gateway target FAILED state after Lambda crash**
+
+If the Lambda crashes during the gateway target creation window, the target
+will reach `FAILED` state. A subsequent `terraform apply` raises
+`ConflictException: A target with name 'glean-stub' already exists`.
+Delete the orphaned target manually before re-applying. See
+`terraform/dev/tools/glean/README.md` Known Issues for the recovery procedure.

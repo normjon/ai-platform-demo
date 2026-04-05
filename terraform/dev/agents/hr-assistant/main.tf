@@ -127,6 +127,8 @@ resource "terraform_data" "hr_assistant_manifest" {
     data.terraform_remote_state.platform.outputs.agentcore_gateway_id,
     var.model_arn,
     aws_bedrockagent_knowledge_base.hr_policies.id,
+    "an enterprise HR Assistant that answers employee questions about HR policies, benefits, and workplace procedures",
+    aws_lambda_function.prompt_vault_writer.arn,
   ]
 
   provisioner "local-exec" {
@@ -137,9 +139,11 @@ resource "terraform_data" "hr_assistant_manifest" {
         --region "${var.aws_region}" \
         --table-name "${data.terraform_remote_state.platform.outputs.agent_registry_table}" \
         --item '{
-          "agent_id":        {"S": "hr-assistant-dev"},
-          "display_name":    {"S": "HR Assistant (Dev)"},
-          "model_arn":       {"S": "${var.model_arn}"},
+          "agent_id":          {"S": "hr-assistant-dev"},
+          "display_name":      {"S": "HR Assistant (Dev)"},
+          "agent_description":          {"S": "an enterprise HR Assistant that answers employee questions about HR policies, benefits, and workplace procedures"},
+          "prompt_vault_lambda_arn":    {"S": "${aws_lambda_function.prompt_vault_writer.arn}"},
+          "model_arn":                  {"S": "${var.model_arn}"},
           "system_prompt_arn": {"S": "${aws_bedrockagent_prompt.hr_assistant_system.arn}"},
           "guardrail_id":    {"S": "${aws_bedrock_guardrail.hr_assistant.guardrail_id}"},
           "guardrail_version": {"S": "${aws_bedrock_guardrail.hr_assistant.version}"},
