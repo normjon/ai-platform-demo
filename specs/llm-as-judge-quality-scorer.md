@@ -1,7 +1,7 @@
 # LLM-as-Judge Quality Scorer — Specification
 
 **Version:** 1.0  
-**Status:** Approved for implementation  
+**Status:** Implemented (April 2026)  
 **Layer:** Platform (`terraform/dev/platform/`)  
 **Author:** Platform Architecture  
 **Last updated:** April 2026
@@ -136,8 +136,8 @@ The handler sets both attributes on every write.
 | Variable            | Value                                                                                                         | Source              |
 |---------------------|---------------------------------------------------------------------------------------------------------------|---------------------|
 | PROMPT_VAULT_BUCKET | ai-platform-dev-prompt-vault-096305373014                                                                     | Platform output     |
-| QUALITY_TABLE       | ai-platform-quality-records-dev                                                                               | Hardcoded           |
-| SCORER_MODEL_ARN    | anthropic.claude-haiku-4-5-20251001                                                                           | CLAUDE.md approved  |
+| QUALITY_TABLE       | ai-platform-dev-quality-records                                                                               | Hardcoded           |
+| SCORER_MODEL_ARN    | us.anthropic.claude-haiku-4-5-20251001-v1:0                                                                   | Cross-region inference profile (required for Claude 4.x on-demand throughput) |
 | SCORE_THRESHOLD     | 0.70                                                                                                          | Hardcoded           |
 | ENVIRONMENT         | dev                                                                                                           | Hardcoded           |
 | AWS_REGION          | us-east-2                                                                                                     | Runtime provided    |
@@ -301,7 +301,7 @@ Per-record log after scoring:
   "below_threshold": false,
   "guardrail_fired": false,
   "evaluation_latency_ms": 1250,
-  "scorer_model": "anthropic.claude-haiku-4-5-20251001"
+  "scorer_model": "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 }
 ```
 
@@ -378,7 +378,7 @@ uv pip install \
 | dynamodb:GetItem                | Agent registry table ARN                    | Look up agent_description  |
 | dynamodb:PutItem                | Quality table ARN                           | Write quality records      |
 | dynamodb:Query                  | Quality table ARN and ARN/index/*           | Idempotency check and GSI queries |
-| bedrock:InvokeModel             | arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-haiku-4-5-20251001 | Score with Haiku  |
+| bedrock:InvokeModel             | arn:aws:bedrock:REGION:ACCOUNT:inference-profile/* and arn:aws:bedrock:*::foundation-model/* | Score with Haiku  |
 | cloudwatch:PutMetricData        | * (service restriction — no resource scope) | Emit quality metrics       |
 | logs:CreateLogGroup             | Scorer log group ARN                        | Lambda logging             |
 | logs:CreateLogStream            | Scorer log group ARN:*                      | Lambda logging             |
@@ -388,11 +388,18 @@ uv pip install \
 | xray:PutTraceSegments           | *                                           | X-Ray tracing              |
 | xray:PutTelemetryRecords        | *                                           | X-Ray tracing              |
 
-Note on Haiku model ARN: Haiku 4.x does not require the `us.` inference
-profile prefix. Use the bare model ID:
-`anthropic.claude-haiku-4-5-20251001`
+Note on Haiku model ARN: Claude Haiku 4.5 requires the cross-region
+inference profile format, same as Claude Sonnet 4.x. Use:
+`us.anthropic.claude-haiku-4-5-20251001-v1:0`
 
-Confirm against approved model ARNs in root CLAUDE.md before use.
+The IAM policy must include both `inference-profile/*` and
+`foundation-model/*` ARNs. Using the bare model ID causes
+`ValidationException: The provided model identifier is invalid`.
+Confirm the exact identifier against available inference profiles:
+```bash
+aws bedrock list-inference-profiles --region us-east-2 \
+  --query 'inferenceProfileSummaries[?contains(inferenceProfileId,`haiku`)].inferenceProfileId'
+```
 
 ---
 
@@ -566,6 +573,12 @@ Respond with ONLY this JSON object and nothing else:
 }
 ```
 
+> **Implementation note:** Despite the "no markdown fences" instruction, Haiku
+> frequently wraps its JSON response in ` ```json ... ``` ` code fences. The
+> handler strips these before calling `json.loads()`. Do not remove the fence-
+> stripping logic — without it every scoring attempt raises `json.JSONDecodeError`
+> and the record is skipped.
+
 ### 3.2 Score Interpretation
 
 | Range     | Label       | Action                                    |
@@ -597,7 +610,7 @@ Add to `terraform/dev/platform/outputs.tf`:
 |------------------------------|----------------------------------------|------------------------------------------|
 | quality_records_table        | DynamoDB table name                    | Quality scores table                     |
 | quality_scorer_function_name | Lambda function name                   | For manual invocation                    |
-| quality_scorer_log_group     | /aws/lambda/ai-platform-quality-scorer-dev | CloudWatch log group              |
+| quality_scorer_log_group     | /aws/lambda/ai-platform-dev-quality-scorer | CloudWatch log group              |
 
 ---
 
@@ -622,37 +635,37 @@ layer per the existing pattern for platform-level infrastructure.
 The implementation is complete when all of the following pass:
 
 ### Terraform
-- [ ] `terraform validate` returns zero errors and zero warnings
-- [ ] `terraform plan` shows expected resources — no unexpected
+- [x] `terraform validate` returns zero errors and zero warnings
+- [x] `terraform plan` shows expected resources — no unexpected
       destroy or replace operations
-- [ ] `terraform apply` completes with zero errors
+- [x] `terraform apply` completes with zero errors
 
 ### Functional
-- [ ] Manual Lambda invocation processes all existing Prompt Vault
+- [x] Manual Lambda invocation processes all existing Prompt Vault
       records without errors
-- [ ] DynamoDB quality records table contains one item per scored
+- [x] DynamoDB quality records table contains one item per scored
       Prompt Vault record
-- [ ] Each DynamoDB item contains all five dimension scores,
+- [x] Each DynamoDB item contains all five dimension scores,
       overall score, below_threshold flag, and TTL
-- [ ] Guardrail-blocked records produce items with guardrail_skipped=true
+- [x] Guardrail-blocked records produce items with guardrail_skipped=true
       and no dimension scores
-- [ ] Re-running the scorer does not create duplicate records
+- [x] Re-running the scorer does not create duplicate records
       (idempotency confirmed)
 
 ### Observability
-- [ ] CloudWatch namespace `AIPlatform/Quality` contains all four
+- [x] CloudWatch namespace `AIPlatform/Quality` contains all four
       metric names: QualityScore, BelowThreshold, GuardrailFired,
       ScorerLatency
-- [ ] QualityScore metric has six Dimension values: correctness,
+- [x] QualityScore metric has six Dimension values: correctness,
       relevance, groundedness, completeness, tone, overall
-- [ ] CloudWatch log group contains structured JSON batch summary
+- [x] CloudWatch log group contains structured JSON batch summary
       with records_failed = 0
-- [ ] Both CloudWatch alarms are in OK state after initial run
+- [x] Both CloudWatch alarms are in OK state after initial run
 
 ### Integration
-- [ ] All 6 HR Assistant smoke tests still pass after platform changes
-- [ ] EventBridge rule is ENABLED and correctly targets scorer Lambda
-- [ ] Lambda permission allows events.amazonaws.com invocation
+- [x] All 6 HR Assistant smoke tests still pass after platform changes
+- [x] EventBridge rule is ENABLED and correctly targets scorer Lambda
+- [x] Lambda permission allows events.amazonaws.com invocation
 
 ---
 

@@ -37,7 +37,6 @@ run on top of:
 | `aws_opensearchserverless_security_policy.kb_encryption` | AWS-managed KMS encryption policy |
 | `aws_opensearchserverless_security_policy.kb_network` | Public endpoint network policy (required by Bedrock) |
 | `aws_opensearchserverless_access_policy.kb_platform_access` | Platform-level index management access for Terraform caller (`ai-platform-kb-platform-dev`) |
-| `data.aws_lambda_function.prompt_vault_writer` | Reads the Prompt Vault Lambda ARN from AWS (owned by agent layer) so it can be injected into the AgentCore runtime without importing agent remote state |
 
 ### Storage Resources
 
@@ -47,6 +46,7 @@ run on top of:
 | S3 | `ai-platform-dev-prompt-vault-<account>` | Structured interaction records written by the Prompt Vault Lambda after every live agent invocation — versioned, KMS encrypted |
 | DynamoDB | `ai-platform-dev-session-memory` | AgentCore session state (partition: `session_id`, sort: `timestamp`) |
 | DynamoDB | `ai-platform-dev-agent-registry` | Agent manifest registry |
+| DynamoDB | `ai-platform-dev-quality-records` | Quality scores written by the scorer Lambda. PK: `record_id`, SK: `scored_at`. GSI `agent-threshold-index` for human review queue. 90-day TTL. |
 
 ### Observability Resources
 
@@ -96,6 +96,9 @@ all downstream layers.
 | `opensearch_collection_arn` | AOSS collection ARN — used in `aws_bedrockagent_knowledge_base` |
 | `opensearch_collection_endpoint` | AOSS collection endpoint URL — used by index creation scripts |
 | `opensearch_collection_name` | AOSS collection name — used in agent data access policy resource strings |
+| `quality_records_table` | Quality scores DynamoDB table name |
+| `quality_scorer_function_name` | Scorer Lambda function name — for manual invocation |
+| `quality_scorer_log_group` | Scorer Lambda CloudWatch log group name |
 
 ---
 
@@ -193,7 +196,7 @@ cd terraform/dev/platform
 ```
 
 The script reads all values from `terraform output` — no arguments needed. It exits 0
-if all five tests pass and 1 if any fail, making it suitable for CI/CD pipelines.
+if all nine tests pass and 1 if any fail, making it suitable for CI/CD pipelines.
 
 **Tests covered:**
 
@@ -204,6 +207,10 @@ if all five tests pass and 1 if any fail, making it suitable for CI/CD pipelines
 | 3 | Bedrock model invocation | Response contains `PASS` |
 | 4 | DynamoDB session memory write/read/delete | Read returns written value |
 | 5 | S3 document bucket KMS encryption | `ServerSideEncryption = aws:kms` |
+| 6 | Quality records DynamoDB write/read/delete | Read returns written value |
+| 7 | Quality scorer Lambda invocation | `scoring_batch_complete` log confirmed |
+| 8 | EventBridge schedule enabled | Rule state = `ENABLED` |
+| 9 | Quality scorer CloudWatch alarms present | Both alarms found |
 
 ---
 
@@ -313,13 +320,18 @@ aws cloudwatch describe-alarms \
 ### X-Ray Tracing
 
 The platform layer provisions a sampling rule (`ai-platform-dev-default`) and a
-service group (`ai-platform-dev`) via `module.observability`. Individual Lambda
-functions activate tracing in their own layers:
+service group (`ai-platform-dev`) via `module.observability`. X-Ray tracing is
+active on all three platform Lambdas via `tracing_config { mode = "Active" }`. The
+Lambda SDK (`aws_xray_sdk`) is packaged in each ZIP for botocore call patching via
+`patch_all()`.
 
-| Function | Layer |
-| --- | --- |
-| `ai-platform-dev-glean-stub` | `tools/glean/` |
-| `hr-assistant-prompt-vault-writer-dev` | `agents/hr-assistant/` |
+| Function | Tracing mode | Notes |
+| --- | --- | --- |
+| `ai-platform-dev-glean-stub` | Active | SDK patches botocore calls |
+| `hr-assistant-prompt-vault-writer-dev` | Active | SDK patches botocore calls |
+| `ai-platform-dev-quality-scorer` | Active | SDK patches botocore calls including Bedrock Converse |
+
+> **Pitfall:** Do NOT call `xray_recorder.put_annotation()` directly in a Lambda handler. Lambda's X-Ray runtime creates a `FacadeSegment` before the handler executes, and `FacadeSegments` cannot be mutated — the call raises `FacadeSegmentMutationException` and crashes the handler silently (the function returns HTTP 500 with no useful log). The `tracing_config { mode = "Active" }` and `patch_all()` are sufficient for Lambda X-Ray instrumentation.
 
 View traces:
 
