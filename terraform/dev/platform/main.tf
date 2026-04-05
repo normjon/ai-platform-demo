@@ -6,6 +6,14 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.0"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -30,7 +38,9 @@ locals {
   session_memory_table_name    = "${local.name_prefix}-session-memory"
   agent_registry_table_name    = "${local.name_prefix}-agent-registry"
   quality_records_table_name   = "${local.name_prefix}-quality-records"
-  agentcore_log_group_arn      = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
+  agentcore_log_group_arn           = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
+  quality_scorer_log_group_name     = "/aws/lambda/${local.name_prefix}-quality-scorer"
+  quality_scorer_log_group_arn      = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/lambda/${local.name_prefix}-quality-scorer"
 }
 
 # ---------------------------------------------------------------------------
@@ -466,4 +476,164 @@ resource "aws_dynamodb_table" "quality_records" {
   }
 
   tags = merge(local.common_tags, { Name = local.quality_records_table_name })
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer Lambda — IAM role, log group, build, and function.
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "quality_scorer" {
+  name              = local.quality_scorer_log_group_name
+  retention_in_days = 30
+  kms_key_id        = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+
+  tags = merge(local.common_tags, { Name = local.quality_scorer_log_group_name })
+}
+
+resource "aws_iam_role" "quality_scorer" {
+  name        = "${local.name_prefix}-quality-scorer"
+  description = "Quality scorer Lambda role — reads Prompt Vault, scores with Haiku, writes quality records."
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid    = "AllowLambdaAssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer" })
+}
+
+resource "aws_iam_role_policy" "quality_scorer" {
+  name = "${local.name_prefix}-quality-scorer-policy"
+  role = aws_iam_role.quality_scorer.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "PromptVaultRead"
+        Effect = "Allow"
+        Action = ["s3:GetObject", "s3:ListBucket"]
+        Resource = [
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}",
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}/*",
+        ]
+      },
+      {
+        Sid    = "AgentRegistryRead"
+        Effect = "Allow"
+        Action = ["dynamodb:GetItem"]
+        Resource = "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.agent_registry_table_name}"
+      },
+      {
+        Sid    = "QualityRecordsWrite"
+        Effect = "Allow"
+        Action = ["dynamodb:PutItem", "dynamodb:Query"]
+        Resource = [
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.quality_records_table_name}",
+          "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/${local.quality_records_table_name}/index/*",
+        ]
+      },
+      {
+        Sid    = "BedrockHaikuInvoke"
+        Effect = "Allow"
+        Action = ["bedrock:InvokeModel"]
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/anthropic.claude-haiku-4-5-20251001"
+      },
+      {
+        Sid      = "CloudWatchMetrics"
+        Effect   = "Allow"
+        Action   = ["cloudwatch:PutMetricData"]
+        Resource = "*"
+      },
+      {
+        Sid    = "CloudWatchLogs"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = [
+          local.quality_scorer_log_group_arn,
+          "${local.quality_scorer_log_group_arn}:*",
+        ]
+      },
+      {
+        Sid    = "KMSDecrypt"
+        Effect = "Allow"
+        Action = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+      },
+      {
+        Sid      = "XRayTracing"
+        Effect   = "Allow"
+        Action   = ["xray:PutTraceSegments", "xray:PutTelemetryRecords"]
+        Resource = "*"
+      },
+    ]
+  })
+}
+
+resource "null_resource" "quality_scorer_build" {
+  triggers = {
+    requirements = filemd5("${path.module}/quality-scorer/requirements.txt")
+    handler      = filemd5("${path.module}/quality-scorer/handler.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-CMD
+      uv pip install \
+        --python-platform aarch64-manylinux2014 \
+        --python-version "3.12" \
+        --target "${path.module}/quality-scorer/build" \
+        --only-binary=:all: \
+        --quiet \
+        -r "${path.module}/quality-scorer/requirements.txt"
+      cp "${path.module}/quality-scorer/handler.py" "${path.module}/quality-scorer/build/handler.py"
+    CMD
+  }
+}
+
+data "archive_file" "quality_scorer" {
+  type        = "zip"
+  source_dir  = "${path.module}/quality-scorer/build"
+  output_path = "${path.module}/quality-scorer/quality-scorer.zip"
+  depends_on  = [null_resource.quality_scorer_build]
+}
+
+resource "aws_lambda_function" "quality_scorer" {
+  function_name    = "${local.name_prefix}-quality-scorer"
+  filename         = data.archive_file.quality_scorer.output_path
+  source_code_hash = data.archive_file.quality_scorer.output_base64sha256
+  handler          = "handler.lambda_handler"
+  runtime          = "python3.12"
+  architectures    = ["arm64"]
+  role             = aws_iam_role.quality_scorer.arn
+  memory_size      = 512
+  timeout          = 300
+  description      = "LLM-as-Judge quality scorer — evaluates Prompt Vault records hourly using Haiku."
+
+  environment {
+    variables = {
+      PROMPT_VAULT_BUCKET  = local.prompt_vault_bucket_name
+      QUALITY_TABLE        = local.quality_records_table_name
+      SCORER_MODEL_ARN     = "anthropic.claude-haiku-4-5-20251001"
+      SCORE_THRESHOLD      = "0.70"
+      ENVIRONMENT          = var.environment
+      AGENT_REGISTRY_TABLE = local.agent_registry_table_name
+    }
+  }
+
+  tracing_config {
+    mode = "Active"
+  }
+
+  depends_on = [aws_cloudwatch_log_group.quality_scorer]
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer" })
 }
