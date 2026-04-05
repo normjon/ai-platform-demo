@@ -493,7 +493,7 @@ resource "aws_cloudwatch_log_group" "quality_scorer" {
 
 resource "aws_iam_role" "quality_scorer" {
   name        = "${local.name_prefix}-quality-scorer"
-  description = "Quality scorer Lambda role — reads Prompt Vault, scores with Haiku, writes quality records."
+  description = "Quality scorer Lambda role: reads Prompt Vault, scores with Haiku, writes quality records."
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"

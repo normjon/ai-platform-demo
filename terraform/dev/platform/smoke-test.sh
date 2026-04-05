@@ -226,7 +226,7 @@ SCORER_STATUS_CODE=$(aws lambda invoke \
   --output text \
   "/dev/null" 2>/dev/null || echo "0")
 
-BATCH_EVENT=$(grep -o '"event":"scoring_batch_complete"' \
+BATCH_EVENT=$(grep -o '"event"[[:space:]]*:[[:space:]]*"scoring_batch_complete"' \
   "/tmp/platform-smoke-scorer-log-${TEST_TS}.txt" 2>/dev/null || echo "")
 
 rm -f "${SCORER_RESPONSE_FILE}" "/tmp/platform-smoke-scorer-log-${TEST_TS}.txt"
