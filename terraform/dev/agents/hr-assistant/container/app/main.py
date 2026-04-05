@@ -39,8 +39,9 @@ app = FastAPI(title="HR Assistant", version="2.0.0")
 @app.on_event("startup")
 async def startup() -> None:
     """Load agent configuration from DynamoDB registry at container start."""
-    from app import agent
+    from app import agent, vault
     agent._load_config()
+    vault.init(agent._CONFIG.get("prompt_vault_lambda_arn", ""))
     logger.info(json.dumps({"event": "container_ready", "agent_id": "hr-assistant-dev"}))
 
 

@@ -72,6 +72,7 @@ def _load_config() -> None:
         "guardrail_id": item["guardrail_id"]["S"] if isinstance(item.get("guardrail_id"), dict) else item.get("guardrail_id", ""),
         "guardrail_version": item["guardrail_version"]["S"] if isinstance(item.get("guardrail_version"), dict) else item.get("guardrail_version", "DRAFT"),
         "knowledge_base_id": item["knowledge_base_id"]["S"] if isinstance(item.get("knowledge_base_id"), dict) else item.get("knowledge_base_id", ""),
+        "prompt_vault_lambda_arn": item["prompt_vault_lambda_arn"]["S"] if isinstance(item.get("prompt_vault_lambda_arn"), dict) else item.get("prompt_vault_lambda_arn", ""),
         "model_arn": _MODEL_ID,
     }
 
