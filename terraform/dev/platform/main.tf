@@ -663,3 +663,41 @@ resource "aws_lambda_permission" "quality_scorer_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.quality_scorer.arn
 }
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — CloudWatch alarms
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_metric_alarm" "quality_below_threshold" {
+  alarm_name          = "${local.name_prefix}-quality-below-threshold"
+  alarm_description   = "More than 3 responses below quality threshold in 1 hour."
+  namespace           = "AIPlatform/Quality"
+  metric_name         = "BelowThreshold"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 3
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "notBreaching"
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-below-threshold" })
+}
+
+resource "aws_cloudwatch_metric_alarm" "quality_scorer_errors" {
+  alarm_name          = "${local.name_prefix}-quality-scorer-errors"
+  alarm_description   = "Quality scorer Lambda encountered errors."
+  namespace           = "AWS/Lambda"
+  metric_name         = "Errors"
+  statistic           = "Sum"
+  period              = 3600
+  evaluation_periods  = 1
+  threshold           = 1
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.quality_scorer.function_name
+  }
+
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-quality-scorer-errors" })
+}
