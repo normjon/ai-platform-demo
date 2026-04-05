@@ -329,6 +329,103 @@ ever applied in rapid automated succession, add an explicit wait between them.
 
 ---
 
+## Agent Onboarding — Registration Contract
+
+The platform owns the agent registry table (`ai-platform-dev-agent-registry`).
+Each agent layer owns exactly one item in that table, keyed on its `agent_id`.
+The item is written by a `terraform_data` + `local-exec` `put-item` block in
+the agent layer's `main.tf` — the platform layer never writes agent items.
+
+The registry is read at runtime by:
+- **The AgentCore container** — loads `model_arn`, `guardrail_id`, `knowledge_base_id`,
+  and related configuration at agent startup
+- **The quality scorer Lambda** — reads `agent_description` to frame the
+  LLM-as-Judge evaluation prompt correctly for each agent's domain
+
+### Mandatory fields
+
+Every agent `put-item` block must include all of the following:
+
+| Field                        | DynamoDB type | Description |
+|------------------------------|---------------|-------------|
+| `agent_id`                   | S             | Unique identifier. Convention: `<name>-<env>` (e.g. `hr-assistant-dev`) |
+| `display_name`               | S             | Human-readable name shown in observability dashboards |
+| `model_arn`                  | S             | Inference profile ARN. Must use `us.*` prefix for Claude 4.x models |
+| `system_prompt_arn`          | S             | Bedrock Prompt ARN for the agent's system prompt |
+| `guardrail_id`               | S             | Bedrock Guardrail ID |
+| `guardrail_version`          | S             | Bedrock Guardrail version |
+| `endpoint_id`                | S             | AgentCore runtime endpoint ID (from platform output `agentcore_endpoint_id`) |
+| `gateway_id`                 | S             | MCP Gateway ID (from platform output `agentcore_gateway_id`) |
+| `allowed_tools`              | SS            | Set of MCP tool names the agent is authorised to call (e.g. `["glean-search"]`) |
+| `data_classification_ceiling`| S             | Maximum data classification the agent may handle (`INTERNAL`, `CONFIDENTIAL`) |
+| `session_ttl_hours`          | N             | Session memory TTL in hours |
+| `grounding_score_min`        | N             | Minimum acceptable Bedrock grounding score (0.0–1.0) |
+| `response_latency_p95_ms`    | N             | p95 latency SLO in milliseconds — used by observability alarms |
+| `monthly_usd_limit`          | N             | Monthly Bedrock spend limit in USD — used by cost alarms |
+| `alert_threshold_pct`        | N             | Percentage of monthly limit that triggers a cost alert (0–100) |
+| `environment`                | S             | Deployment environment (`dev`, `staging`, `production`) |
+| `registered_at`              | S             | ISO 8601 UTC timestamp of registration — use `$(date -u +%Y-%m-%dT%H:%M:%SZ)` |
+| `agent_description`          | S             | **Required by quality scorer.** One-sentence plain-English description of the agent's purpose and domain. Used to frame the LLM-as-Judge evaluation prompt — be specific enough to anchor the correctness and groundedness dimensions correctly. |
+
+### Optional fields
+
+| Field              | DynamoDB type | Description |
+|--------------------|---------------|-------------|
+| `knowledge_base_id`| S             | Bedrock Knowledge Base ID. Include if the agent uses a KB for retrieval. Omit for agents that do not use a KB. |
+
+### Reference `put-item` template
+
+```bash
+aws dynamodb put-item \
+  --region "${var.aws_region}" \
+  --table-name "${data.terraform_remote_state.platform.outputs.agent_registry_table}" \
+  --item '{
+    "agent_id":                    {"S": "<name>-<env>"},
+    "display_name":                {"S": "<Human-Readable Name> (<Env>)"},
+    "agent_description":           {"S": "<one sentence describing what this agent does and for whom>"},
+    "model_arn":                   {"S": "${var.model_arn}"},
+    "system_prompt_arn":           {"S": "<bedrock prompt arn>"},
+    "guardrail_id":                {"S": "<guardrail id>"},
+    "guardrail_version":           {"S": "<guardrail version>"},
+    "endpoint_id":                 {"S": "${data.terraform_remote_state.platform.outputs.agentcore_endpoint_id}"},
+    "gateway_id":                  {"S": "${data.terraform_remote_state.platform.outputs.agentcore_gateway_id}"},
+    "allowed_tools":               {"SS": ["<tool-name>"]},
+    "data_classification_ceiling": {"S": "INTERNAL"},
+    "session_ttl_hours":           {"N": "24"},
+    "grounding_score_min":         {"N": "0.75"},
+    "response_latency_p95_ms":     {"N": "5000"},
+    "monthly_usd_limit":           {"N": "50"},
+    "alert_threshold_pct":         {"N": "80"},
+    "environment":                 {"S": "${var.environment}"},
+    "registered_at":               {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+  }'
+```
+
+### Writing `agent_description`
+
+The description is read by Haiku at quality scoring time. Write it as a single
+sentence that accurately names the agent's role, its primary user, and the
+domain it operates in. The quality scorer uses it to correctly anchor
+`correctness` and `groundedness` dimensions — a vague description produces
+less accurate scores.
+
+Good: `"an enterprise HR Assistant that answers employee questions about HR policies, benefits, and workplace procedures"`  
+Too vague: `"an AI assistant that helps users"`
+
+### Teardown note
+
+The `terraform_data + local-exec` provisioner does not have a `when = destroy`
+handler. Registry items persist after `terraform destroy`. Delete manually:
+
+```bash
+aws dynamodb delete-item \
+  --region us-east-2 \
+  --table-name ai-platform-dev-agent-registry \
+  --key '{"agent_id": {"S": "<agent-id>"}}'
+```
+
+---
+
 ## Known Issues
 
 **AgentCore VPC-mode ENIs block subnet deletion on destroy**
