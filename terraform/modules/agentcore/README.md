@@ -35,12 +35,7 @@ how to transition to a real Glean endpoint.
 | `agent_registry_table` | string | DynamoDB table name for agent registry |
 | `agentcore_role_arn` | string | IAM role ARN assumed by AgentCore runtime (IRSA) |
 | `log_group_agentcore` | string | CloudWatch log group name for invocation logs |
-| `prompt_vault_lambda_arn` | string | ARN of the Prompt Vault writer Lambda — injected as `PROMPT_VAULT_LAMBDA` env var so the container can invoke it asynchronously (fire-and-forget, `InvocationType=Event`) after every agent response |
 | `tags` | map(string) | Tags applied to all resources |
-
-The platform layer obtains `prompt_vault_lambda_arn` via a `data "aws_lambda_function"` data
-source pointed at `hr-assistant-prompt-vault-writer-dev`. This keeps the dependency direction
-`platform ← agents` — the platform layer never reads agent remote state.
 
 ## Critical constraints
 
