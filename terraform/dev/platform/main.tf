@@ -29,6 +29,7 @@ locals {
   prompt_vault_bucket_name     = "${local.name_prefix}-prompt-vault-${var.account_id}"
   session_memory_table_name    = "${local.name_prefix}-session-memory"
   agent_registry_table_name    = "${local.name_prefix}-agent-registry"
+  quality_records_table_name   = "${local.name_prefix}-quality-records"
   agentcore_log_group_arn      = "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/agentcore/${local.name_prefix}"
 }
 
@@ -410,4 +411,59 @@ module "agentcore" {
   log_group_agentcore     = module.observability.log_group_agentcore
   prompt_vault_lambda_arn = data.aws_lambda_function.prompt_vault_writer.arn
   tags                    = local.common_tags
+}
+
+# ---------------------------------------------------------------------------
+# Quality Scorer — LLM-as-Judge pipeline
+#
+# Processes Prompt Vault records hourly via EventBridge, invokes Haiku to
+# score each interaction across five dimensions, and writes results here.
+# All quality scorer resources are inline in this layer per the spec —
+# no new modules.
+# ---------------------------------------------------------------------------
+
+resource "aws_dynamodb_table" "quality_records" {
+  name         = local.quality_records_table_name
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "record_id"
+  range_key    = "scored_at"
+
+  attribute {
+    name = "record_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "scored_at"
+    type = "S"
+  }
+
+  attribute {
+    name = "agent_id"
+    type = "S"
+  }
+
+  attribute {
+    name = "below_threshold_str"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "ttl"
+    enabled        = true
+  }
+
+  global_secondary_index {
+    name            = "agent-threshold-index"
+    hash_key        = "agent_id"
+    range_key       = "below_threshold_str"
+    projection_type = "ALL"
+  }
+
+  server_side_encryption {
+    enabled     = true
+    kms_key_arn = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+  }
+
+  tags = merge(local.common_tags, { Name = local.quality_records_table_name })
 }

@@ -85,3 +85,9 @@ output "opensearch_collection_name" {
   description = "AOSS collection name — referenced in agent data access policy resource strings."
   value       = aws_opensearchserverless_collection.kb.name
 }
+
+# Quality scorer outputs
+output "quality_records_table" {
+  description = "DynamoDB table name for LLM-as-Judge quality scores."
+  value       = aws_dynamodb_table.quality_records.name
+}
