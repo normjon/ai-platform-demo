@@ -58,7 +58,7 @@
       "title": "Input tokens today",
       "description": "Total input tokens consumed across all Bedrock model invocations today. Covers both the HR Assistant (claude-sonnet-4-6) and quality scorer (claude-haiku-4-5-20251001). HR Assistant input includes system prompt, conversation history, and KB context — typically 2 000–8 000 tokens per invocation.",
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
@@ -89,7 +89,7 @@
       "title": "Output tokens today",
       "description": "Total output tokens generated across all Bedrock model invocations today. HR Assistant responses are typically 200–600 output tokens. Quality scorer output is 100–200 tokens per scored record. Combined with input tokens to estimate daily Bedrock spend.",
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
@@ -120,7 +120,7 @@
       "title": "Bedrock throttles today",
       "description": "Count of Bedrock invocations throttled due to on-demand throughput limits today. Non-zero values indicate the platform is approaching its throughput quota. Throttling degrades user-visible latency and causes quality scorer delays. Request a quota increase if throttling is sustained.",
       "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Bedrock_InvocationThrottles_sum{environment=\"$environment\"}[1d]))",
@@ -153,7 +153,7 @@
       "title": "KB searchable documents",
       "description": "Number of searchable documents in the HR Policies Knowledge Base (ai-platform-kb-dev AOSS collection). Expected value is 8 — the 8 HR policy documents. A drop below 8 indicates an ingestion failure or accidental deletion. Re-run the Bedrock KB ingestion job to restore documents.",
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "cloudwatch_AWS_AOSS_SearchableDocuments_sum{environment=\"$environment\"}",
@@ -185,7 +185,7 @@
       "title": "Input and output tokens per day",
       "description": "Daily total input and output tokens consumed by Bedrock models across the platform. Use this chart to understand token consumption trends and project costs. A sudden spike in input tokens may indicate excessively large context windows or a runaway loop in the agent invocation logic.",
       "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
@@ -213,7 +213,7 @@
       "title": "Bedrock invocation count over time",
       "description": "Rate of successful Bedrock model invocations per minute over time. A step increase in invocation rate following a feature release may indicate more frequent KB retrievals or additional model calls per user interaction. Monitor alongside token counts to understand the cost impact of each new feature.",
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_Bedrock_Invocations_sum{environment=\"$environment\"}[5m])",
@@ -244,7 +244,7 @@
       "title": "KB successful API call rate over time",
       "description": "Rate of successful API calls to the HR Policies Knowledge Base AOSS collection per minute. Primarily consists of KB retrieve operations from the HR Assistant during invocation. This metric tracks KB utilisation and scales proportionally with agent invocation volume.",
       "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_AOSS_SuccessfulRequestCount_sum{environment=\"$environment\"}[5m])",
@@ -275,7 +275,7 @@
       "title": "Quality scorer token consumption over time",
       "description": "Input and output token consumption from the quality scorer (Haiku) model invocations over time. Each scored interaction consumes approximately 800–1 200 input tokens and 100–200 output tokens. A sudden increase indicates either a larger batch of new Prompt Vault records or excessively long interaction records being passed to Haiku.",
       "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\", ModelId=~\".*haiku.*\"}[5m])",
