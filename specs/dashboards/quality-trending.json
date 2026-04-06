@@ -1,0 +1,364 @@
+{
+  "title": "Enterprise AI Platform — Quality Trending",
+  "uid": "ai-platform-quality-trending",
+  "version": 1,
+  "schemaVersion": 36,
+  "timezone": "utc",
+  "refresh": "1m",
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
+  "editable": true,
+  "graphTooltip": 1,
+  "tags": ["ai-platform", "quality", "llm-judge"],
+  "templating": {
+    "list": [
+      {
+        "name": "environment",
+        "label": "Environment",
+        "type": "custom",
+        "query": "dev,staging,production",
+        "current": { "value": "dev", "text": "dev" },
+        "options": [
+          { "value": "dev", "text": "dev", "selected": true },
+          { "value": "staging", "text": "staging", "selected": false },
+          { "value": "production", "text": "production", "selected": false }
+        ],
+        "hide": 0,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "project_id",
+        "label": "Project",
+        "type": "custom",
+        "query": "ai-platform",
+        "current": { "value": "ai-platform", "text": "ai-platform" },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "agent_id",
+        "label": "Agent",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(QualityScore{environment=\"$environment\"}, AgentId)",
+        "refresh": 2,
+        "hide": 0,
+        "includeAll": true,
+        "allValue": ".*",
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Overall quality score — latest",
+      "description": "Most recent overall quality score for the selected agent. The overall score is the mean of five dimensions: correctness, relevance, groundedness, completeness, and tone. Scores are on a 0.0–1.0 scale. The 0.70 threshold is the below-threshold alarm boundary — sustained scores below this value flag interactions for human review.",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
+          "legendFormat": "Overall score",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.50 },
+              { "color": "yellow", "value": 0.70 },
+              { "color": "green",  "value": 0.80 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Below threshold — last 24h",
+      "description": "Count of interactions that scored below the 0.70 overall quality threshold in the last 24 hours for the selected agent. These interactions appear in the human review queue (agent-threshold-index GSI on the quality-records DynamoDB table). More than 3 in an hour triggers the CloudWatch alarm.",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum(increase(BelowThreshold{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
+          "legendFormat": "Below threshold",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 3 },
+              { "color": "red",    "value": 10 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Scorer invocations — last 24h",
+      "description": "Total number of interactions scored by the LLM-as-Judge quality scorer in the last 24 hours. The scorer runs hourly; each invocation processes all unscored Prompt Vault records. A low count relative to expected agent traffic may indicate the scorer is skipping records due to validation failures.",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum(increase(QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}[24h]))",
+          "legendFormat": "Scored records",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Guardrail fires — last 24h",
+      "description": "Count of interactions where the Bedrock Guardrail intervened in the last 24 hours. Guardrail-fired interactions are not scored for quality — they are tracked to distinguish blocked content from quality failures. A sustained high count may indicate the guardrail topic policies need tuning.",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum(increase(GuardrailFired{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
+          "legendFormat": "Guardrail fires",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "orange", "value": 5 },
+              { "color": "red",    "value": 20 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Overall quality score over time per agent",
+      "description": "Overall quality score (mean of five dimensions) over time per agent. The 0.70 threshold line represents the below-threshold alarm boundary. A sustained downward trend for a specific agent indicates a quality regression — review recent below-threshold records in the quality-records DynamoDB table and check for prompt or model changes.",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
+          "legendFormat": "{{AgentId}} — overall",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["last", "min", "max"]
+        },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "orange", "value": 0.50 },
+              { "color": "yellow", "value": 0.70 },
+              { "color": "green",  "value": 0.80 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Per-dimension quality scores over time",
+      "description": "Individual dimension quality scores (correctness, relevance, groundedness, completeness, tone) over time for the selected agent. Diverging dimensions identify specific failure modes — for example, high correctness but low groundedness suggests the agent is giving correct answers from parametric knowledge rather than retrieved KB content.",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"correctness\"}",
+          "legendFormat": "{{AgentId}} — correctness",
+          "refId": "A"
+        },
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"relevance\"}",
+          "legendFormat": "{{AgentId}} — relevance",
+          "refId": "B"
+        },
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"groundedness\"}",
+          "legendFormat": "{{AgentId}} — groundedness",
+          "refId": "C"
+        },
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"completeness\"}",
+          "legendFormat": "{{AgentId}} — completeness",
+          "refId": "D"
+        },
+        {
+          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"tone\"}",
+          "legendFormat": "{{AgentId}} — tone",
+          "refId": "E"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["last", "min", "max"]
+        },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          }
+        }
+      }
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Below-threshold count per hour",
+      "description": "Number of interactions scoring below the 0.70 quality threshold per hour for the selected agent. The CloudWatch alarm fires when this exceeds 3 in any one-hour period. A spike in below-threshold interactions following a deployment indicates a potential regression in the agent's system prompt or model configuration.",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "sum(increase(BelowThreshold{environment=\"$environment\", AgentId=~\"$agent_id\"}[1h]))",
+          "legendFormat": "Below threshold per hour",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "xField": "time",
+        "stacking": "none",
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red",    "value": 3 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Scorer latency over time (ms)",
+      "description": "End-to-end latency in milliseconds for each Haiku model invocation during quality scoring. Elevated latency (above 8 000 ms) indicates Bedrock throttling or model availability issues. The quality scorer has a 5-minute Lambda timeout — sustained latency above 4 000 ms per record may cause the scorer to timeout on large batches.",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "ScorerLatency{environment=\"$environment\", AgentId=~\"$agent_id\"}",
+          "legendFormat": "{{AgentId}} — scorer latency",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["last", "min", "max"]
+        },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 3000 },
+              { "color": "orange", "value": 8000 },
+              { "color": "red",    "value": 15000 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
