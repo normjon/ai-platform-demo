@@ -44,7 +44,7 @@
         "label": "Agent",
         "type": "query",
         "datasource": { "type": "prometheus", "uid": "${datasource}" },
-        "query": "label_values(QualityScore{environment=\"$environment\"}, AgentId)",
+        "query": "label_values(cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\"}, AgentId)",
         "refresh": 2,
         "hide": 0,
         "includeAll": true,
@@ -63,7 +63,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
           "legendFormat": "Overall score",
           "refId": "A"
         }
@@ -99,7 +99,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(BelowThreshold{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
+          "expr": "sum(increase(cloudwatch_AIPlatform_Quality_BelowThreshold_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
           "legendFormat": "Below threshold",
           "refId": "A"
         }
@@ -133,7 +133,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}[24h]))",
+          "expr": "sum(increase(cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}[24h]))",
           "legendFormat": "Scored records",
           "refId": "A"
         }
@@ -164,7 +164,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(GuardrailFired{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
+          "expr": "sum(increase(cloudwatch_AIPlatform_Quality_GuardrailFired_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
           "legendFormat": "Guardrail fires",
           "refId": "A"
         }
@@ -198,7 +198,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
           "legendFormat": "{{AgentId}} — overall",
           "refId": "A"
         }
@@ -240,27 +240,27 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"correctness\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"correctness\"}",
           "legendFormat": "{{AgentId}} — correctness",
           "refId": "A"
         },
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"relevance\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"relevance\"}",
           "legendFormat": "{{AgentId}} — relevance",
           "refId": "B"
         },
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"groundedness\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"groundedness\"}",
           "legendFormat": "{{AgentId}} — groundedness",
           "refId": "C"
         },
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"completeness\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"completeness\"}",
           "legendFormat": "{{AgentId}} — completeness",
           "refId": "D"
         },
         {
-          "expr": "QualityScore{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"tone\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"tone\"}",
           "legendFormat": "{{AgentId}} — tone",
           "refId": "E"
         }
@@ -293,7 +293,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(BelowThreshold{environment=\"$environment\", AgentId=~\"$agent_id\"}[1h]))",
+          "expr": "sum(increase(cloudwatch_AIPlatform_Quality_BelowThreshold_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[1h]))",
           "legendFormat": "Below threshold per hour",
           "refId": "A"
         }
@@ -328,7 +328,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "ScorerLatency{environment=\"$environment\", AgentId=~\"$agent_id\"}",
+          "expr": "cloudwatch_AIPlatform_Quality_ScorerLatency_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}",
           "legendFormat": "{{AgentId}} — scorer latency",
           "refId": "A"
         }

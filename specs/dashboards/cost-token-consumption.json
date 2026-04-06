@@ -51,7 +51,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_bedrock_input_token_count_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Input tokens",
           "refId": "A"
         }
@@ -82,7 +82,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_bedrock_output_token_count_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(increase(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Output tokens",
           "refId": "A"
         }
@@ -113,7 +113,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_bedrock_invocation_throttles_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(increase(cloudwatch_AWS_Bedrock_InvocationThrottles_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Throttles",
           "refId": "A"
         }
@@ -146,7 +146,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "aws_aoss_searchable_documents{environment=\"$environment\"}",
+          "expr": "cloudwatch_AWS_AOSS_SearchableDocuments_sum{environment=\"$environment\"}",
           "legendFormat": "Searchable documents",
           "refId": "A"
         }
@@ -178,12 +178,12 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_bedrock_input_token_count_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Input tokens",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(aws_bedrock_output_token_count_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(increase(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Output tokens",
           "refId": "B"
         }
@@ -206,7 +206,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_bedrock_invocation_latency_count{environment=\"$environment\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Bedrock_Invocations_sum{environment=\"$environment\"}[5m])",
           "legendFormat": "Bedrock invocations per minute",
           "refId": "A"
         }
@@ -237,7 +237,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_aoss_successful_request_count_sum{environment=\"$environment\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_AOSS_SuccessfulRequestCount_sum{environment=\"$environment\"}[5m])",
           "legendFormat": "KB API calls per minute",
           "refId": "A"
         }
@@ -268,12 +268,12 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_bedrock_input_token_count_sum{environment=\"$environment\", model_id=~\".*haiku.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\", ModelId=~\".*haiku.*\"}[5m])",
           "legendFormat": "Haiku input tokens/min",
           "refId": "A"
         },
         {
-          "expr": "rate(aws_bedrock_output_token_count_sum{environment=\"$environment\", model_id=~\".*haiku.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\", ModelId=~\".*haiku.*\"}[5m])",
           "legendFormat": "Haiku output tokens/min",
           "refId": "B"
         }
