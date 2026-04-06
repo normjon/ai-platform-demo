@@ -53,7 +53,7 @@
         "name": "agent_id",
         "label": "Agent",
         "type": "query",
-        "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+        "datasource": { "type": "prometheus", "uid": "amp-dev" },
         "query": "label_values(cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\"}, AgentId)",
         "refresh": 2,
         "hide": 0,
@@ -70,7 +70,7 @@
       "title": "Overall quality score — latest",
       "description": "Most recent overall quality score for the selected agent. The overall score is the mean of five dimensions: correctness, relevance, groundedness, completeness, and tone. Scores are on a 0.0–1.0 scale. The 0.70 threshold is the below-threshold alarm boundary — sustained scores below this value flag interactions for human review.",
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
@@ -106,7 +106,7 @@
       "title": "Below threshold — last 24h",
       "description": "Count of interactions that scored below the 0.70 overall quality threshold in the last 24 hours for the selected agent. These interactions appear in the human review queue (agent-threshold-index GSI on the quality-records DynamoDB table). More than 3 in an hour triggers the CloudWatch alarm.",
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AIPlatform_Quality_BelowThreshold_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
@@ -140,7 +140,7 @@
       "title": "Scorer invocations — last 24h",
       "description": "Total number of interactions scored by the LLM-as-Judge quality scorer in the last 24 hours. The scorer runs hourly; each invocation processes all unscored Prompt Vault records. A low count relative to expected agent traffic may indicate the scorer is skipping records due to validation failures.",
       "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}[24h]))",
@@ -171,7 +171,7 @@
       "title": "Guardrail fires — last 24h",
       "description": "Count of interactions where the Bedrock Guardrail intervened in the last 24 hours. Guardrail-fired interactions are not scored for quality — they are tracked to distinguish blocked content from quality failures. A sustained high count may indicate the guardrail topic policies need tuning.",
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AIPlatform_Quality_GuardrailFired_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[24h]))",
@@ -205,7 +205,7 @@
       "title": "Overall quality score over time per agent",
       "description": "Overall quality score (mean of five dimensions) over time per agent. The 0.70 threshold line represents the below-threshold alarm boundary. A sustained downward trend for a specific agent indicates a quality regression — review recent below-threshold records in the quality-records DynamoDB table and check for prompt or model changes.",
       "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"overall\"}",
@@ -247,7 +247,7 @@
       "title": "Per-dimension quality scores over time",
       "description": "Individual dimension quality scores (correctness, relevance, groundedness, completeness, tone) over time for the selected agent. Diverging dimensions identify specific failure modes — for example, high correctness but low groundedness suggests the agent is giving correct answers from parametric knowledge rather than retrieved KB content.",
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "cloudwatch_AIPlatform_Quality_QualityScore_sum{environment=\"$environment\", AgentId=~\"$agent_id\", Dimension=\"correctness\"}",
@@ -300,7 +300,7 @@
       "title": "Below-threshold count per hour",
       "description": "Number of interactions scoring below the 0.70 quality threshold per hour for the selected agent. The CloudWatch alarm fires when this exceeds 3 in any one-hour period. A spike in below-threshold interactions following a deployment indicates a potential regression in the agent's system prompt or model configuration.",
       "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AIPlatform_Quality_BelowThreshold_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}[1h]))",
@@ -335,7 +335,7 @@
       "title": "Scorer latency over time (ms)",
       "description": "End-to-end latency in milliseconds for each Haiku model invocation during quality scoring. Elevated latency (above 8 000 ms) indicates Bedrock throttling or model availability issues. The quality scorer has a 5-minute Lambda timeout — sustained latency above 4 000 ms per record may cause the scorer to timeout on large batches.",
       "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "cloudwatch_AIPlatform_Quality_ScorerLatency_sum{environment=\"$environment\", AgentId=~\"$agent_id\"}",
