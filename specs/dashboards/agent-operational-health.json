@@ -58,7 +58,7 @@
       "title": "Prompt vault writer invocations — last 1h",
       "description": "Total number of Prompt Vault writer Lambda invocations in the last hour. Each invocation corresponds to one HR Assistant agent interaction that completed and was written to the vault. A sudden drop indicates agents are not completing interactions successfully.",
       "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\", FunctionName=~\".*prompt-vault-writer.*\"}[1h]))",
@@ -89,7 +89,7 @@
       "title": "Lambda error rate — last 1h",
       "description": "Percentage of Lambda invocations that ended with an error in the last hour. Covers the quality scorer and prompt vault writer. Any value above 1% warrants investigation. Check CloudWatch Logs for the specific error event.",
       "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "100 * sum(increase(cloudwatch_AWS_Lambda_Errors_sum{environment=\"$environment\"}[1h])) / clamp_min(sum(increase(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\"}[1h])), 1)",
@@ -125,7 +125,7 @@
       "title": "Bedrock P95 invocation latency (ms)",
       "description": "95th percentile Bedrock model invocation latency in milliseconds over the last hour. This represents the worst-case end-to-end model call time experienced by 95% of invocations. Values above 15 000 ms indicate model latency is likely impacting user-visible response time.",
       "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "avg_over_time(cloudwatch_AWS_Bedrock_InvocationLatency_max{environment=\"$environment\"}[1h])",
@@ -160,7 +160,7 @@
       "title": "Lambda throttles — last 1h",
       "description": "Count of Lambda invocations throttled due to concurrency limits in the last hour. Non-zero values mean interactions may have failed or been delayed. Increase the reserved concurrency limit on the prompt vault writer or quality scorer if throttling persists.",
       "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "sum(increase(cloudwatch_AWS_Lambda_Throttles_sum{environment=\"$environment\"}[1h]))",
@@ -193,7 +193,7 @@
       "title": "Lambda invocation rate over time",
       "description": "Rate of Lambda invocations per minute for each AI platform function. The prompt vault writer rate tracks agent invocation volume. The quality scorer fires once per hour on schedule. A drop in prompt vault writer invocations while agent traffic continues indicates the vault writer is failing silently.",
       "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\", FunctionName=~\".*prompt-vault-writer.*\"}[5m])",
@@ -229,7 +229,7 @@
       "title": "Bedrock invocation latency over time (P50 / P95)",
       "description": "Bedrock model invocation latency over time. P50 represents median latency for typical interactions; P95 captures tail latency affecting the worst 5% of users. If P95 diverges significantly from P50, a subset of invocations are experiencing severe latency — check for retries or large context windows.",
       "gridPos": { "x": 0, "y": 12, "w": 24, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "avg_over_time(cloudwatch_AWS_Bedrock_InvocationLatency_sum{environment=\"$environment\"}[5m])",
@@ -266,7 +266,7 @@
       "title": "Lambda error rate over time",
       "description": "Rate of Lambda errors per minute for quality scorer and prompt vault writer. Any sustained non-zero error rate for the quality scorer creates gaps in the quality record — interactions are not scored until the scorer next runs successfully. For the vault writer, errors mean interaction records are not being persisted.",
       "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_Lambda_Errors_sum{environment=\"$environment\", FunctionName=~\".*quality-scorer.*\"}[5m])",
@@ -302,7 +302,7 @@
       "title": "Bedrock client errors over time",
       "description": "Count of Bedrock invocations returning client errors (4xx) over time. Client errors include throttling (429), invalid model ID (400), and permission errors (403). A spike indicates the platform is approaching on-demand throughput limits or has an IAM configuration issue.",
       "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
-      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "datasource": { "type": "grafana-amazonprometheus-datasource", "uid": "amp-dev" },
       "targets": [
         {
           "expr": "rate(cloudwatch_AWS_Bedrock_InvocationClientErrors_sum{environment=\"$environment\"}[5m])",
