@@ -51,7 +51,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_lambda_invocations_sum{environment=\"$environment\", function_name=~\".*prompt-vault-writer.*\"}[1h]))",
+          "expr": "sum(increase(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\", FunctionName=~\".*prompt-vault-writer.*\"}[1h]))",
           "legendFormat": "Invocations",
           "refId": "A"
         }
@@ -82,7 +82,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "100 * sum(increase(aws_lambda_errors_sum{environment=\"$environment\"}[1h])) / clamp_min(sum(increase(aws_lambda_invocations_sum{environment=\"$environment\"}[1h])), 1)",
+          "expr": "100 * sum(increase(cloudwatch_AWS_Lambda_Errors_sum{environment=\"$environment\"}[1h])) / clamp_min(sum(increase(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\"}[1h])), 1)",
           "legendFormat": "Error %",
           "refId": "A"
         }
@@ -118,7 +118,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "avg_over_time(aws_bedrock_invocation_latency_p95{environment=\"$environment\"}[1h])",
+          "expr": "avg_over_time(cloudwatch_AWS_Bedrock_InvocationLatency_max{environment=\"$environment\"}[1h])",
           "legendFormat": "P95 ms",
           "refId": "A"
         }
@@ -153,7 +153,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "sum(increase(aws_lambda_throttles_sum{environment=\"$environment\"}[1h]))",
+          "expr": "sum(increase(cloudwatch_AWS_Lambda_Throttles_sum{environment=\"$environment\"}[1h]))",
           "legendFormat": "Throttles",
           "refId": "A"
         }
@@ -186,12 +186,12 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_lambda_invocations_sum{environment=\"$environment\", function_name=~\".*prompt-vault-writer.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\", FunctionName=~\".*prompt-vault-writer.*\"}[5m])",
           "legendFormat": "Prompt vault writer",
           "refId": "A"
         },
         {
-          "expr": "rate(aws_lambda_invocations_sum{environment=\"$environment\", function_name=~\".*quality-scorer.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Lambda_Invocations_sum{environment=\"$environment\", FunctionName=~\".*quality-scorer.*\"}[5m])",
           "legendFormat": "Quality scorer",
           "refId": "B"
         }
@@ -222,12 +222,12 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "avg_over_time(aws_bedrock_invocation_latency_p50{environment=\"$environment\"}[5m])",
+          "expr": "avg_over_time(cloudwatch_AWS_Bedrock_InvocationLatency_sum{environment=\"$environment\"}[5m])",
           "legendFormat": "P50 latency (ms)",
           "refId": "A"
         },
         {
-          "expr": "avg_over_time(aws_bedrock_invocation_latency_p95{environment=\"$environment\"}[5m])",
+          "expr": "avg_over_time(cloudwatch_AWS_Bedrock_InvocationLatency_max{environment=\"$environment\"}[5m])",
           "legendFormat": "P95 latency (ms)",
           "refId": "B"
         }
@@ -259,12 +259,12 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_lambda_errors_sum{environment=\"$environment\", function_name=~\".*quality-scorer.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Lambda_Errors_sum{environment=\"$environment\", FunctionName=~\".*quality-scorer.*\"}[5m])",
           "legendFormat": "Quality scorer errors",
           "refId": "A"
         },
         {
-          "expr": "rate(aws_lambda_errors_sum{environment=\"$environment\", function_name=~\".*prompt-vault-writer.*\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Lambda_Errors_sum{environment=\"$environment\", FunctionName=~\".*prompt-vault-writer.*\"}[5m])",
           "legendFormat": "Prompt vault writer errors",
           "refId": "B"
         }
@@ -295,7 +295,7 @@
       "datasource": { "type": "prometheus", "uid": "${datasource}" },
       "targets": [
         {
-          "expr": "rate(aws_bedrock_invocation_client_errors_sum{environment=\"$environment\"}[5m])",
+          "expr": "rate(cloudwatch_AWS_Bedrock_InvocationClientErrors_sum{environment=\"$environment\"}[5m])",
           "legendFormat": "Bedrock client errors",
           "refId": "A"
         }
