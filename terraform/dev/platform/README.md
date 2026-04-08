@@ -277,6 +277,34 @@ aws dynamodb query \
 Overall score is the mean of the five dimensions. Records with `score_overall < 0.70` are
 flagged `below_threshold = true` and queryable via the `agent-threshold-index` GSI.
 
+### CloudWatch metrics emitted
+
+The scorer emits to the `AIPlatform/Quality` namespace after each scored record:
+
+| Metric | Stat to use in PromQL | Description |
+| --- | --- | --- |
+| `QualityScore` | `_sum / _count` | Per-record average score per dimension (0.0–1.0) |
+| `BelowThreshold` | `sum_over_time(_sum[window])` | 1 if overall score < 0.70, 0 otherwise |
+| `GuardrailFired` | `sum_over_time(_sum[window])` | 1 if the Bedrock Guardrail intervened |
+| `ScorerLatency` | `_sum / _count` | Haiku Converse API round-trip in ms |
+
+**Critical PromQL note:** These are CloudWatch gauges in AMP, not Prometheus counters.
+Never use `rate()` or `increase()` — they return 0. Use `sum_over_time()` for totals
+and `_sum / _count` for averages. See `specs/observability-metric-catalogue.md` for
+full PromQL pattern guidance.
+
+**Why raw `QualityScore_sum` is wrong:** The scorer batches all unscored records.
+If a batch of 24 records is scored, CloudWatch aggregates all 24 `QualityScore` values
+into `_sum` (~10.5 for correctness) and `_count` (24). Displaying `_sum` gives the
+batch total, not the per-record score. Always divide: `QualityScore_sum / QualityScore_count`.
+
+### Metric staleness in Grafana stat panels
+
+The scorer runs hourly. Prometheus applies a 5-minute staleness window to instant queries.
+Stat panels (`lastNotNull`) will show "No data" between scorer runs — this is expected
+behaviour. Timeseries panels display historical data regardless of staleness. If a stat
+panel shows "No data", invoke the scorer manually (command above) to get a fresh sample.
+
 ---
 
 ## Observability

@@ -400,7 +400,33 @@ cd terraform/dev/agents/hr-assistant
 
 ## Observability
 
-AgentCore runtime logs (structured JSON, ADR-003):
+### CloudWatch Metric Filter ownership
+
+This layer owns four CloudWatch Metric Filters on the AgentCore runtime log group.
+These produce the `AIPlatform/AgentCore` custom metrics visible in the
+agent-operational-health Grafana dashboard.
+
+| Filter name | Log event matched | Metric name | AMP metric name |
+| --- | --- | --- | --- |
+| `hr-assistant-agent-invocation-latency-dev` | `agent_invoke` — value from `latency_ms` | `AgentInvocationLatency` | `cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_sum / _count` |
+| `hr-assistant-agent-invocation-count-dev` | `agent_invoke` — emits 1 per event | `AgentInvocationCount` | `sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationCount_sum[window])` |
+| `hr-assistant-kb-retrieval-count-dev` | `kb_retrieve` — dimension: `KnowledgeBaseId` | `KBRetrievalCount` | `sum_over_time(cloudwatch_AIPlatform_AgentCore_KBRetrievalCount_sum[window])` |
+| `hr-assistant-agent-invocation-errors-dev` | `invocation_error` — emits 1 per event | `AgentInvocationErrors` | `sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationErrors_sum[window])` |
+
+These filters live in `main.tf` in this layer — not in the platform layer. This is
+intentional: the platform does not know the HR Assistant's log event schema. Adding a
+new agent does not require changes to any platform or shared resource.
+
+**`KBRetrievalCount` has no `default_value`:** AWS CloudWatch does not allow both
+`default_value` and `dimensions` on the same metric filter transformation. Since
+`KBRetrievalCount` uses the `KnowledgeBaseId` dimension, it has no default value.
+Zero-retrieval periods produce no data points — stat panels may show "No data"
+when the agent has not been invoked recently (5-minute Prometheus staleness window).
+
+**PromQL note:** All `AIPlatform/AgentCore` metrics are CloudWatch gauges in AMP.
+Never use `rate()` or `increase()` — they return 0. Use `sum_over_time()` for totals.
+
+### AgentCore runtime logs (structured JSON, ADR-003)
 
 ```
 /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT
