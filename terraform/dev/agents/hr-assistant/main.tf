@@ -610,3 +610,108 @@ resource "aws_s3_object" "hr_doc_benefits" {
   etag         = filemd5("${path.module}/kb-docs/benefits-enrolment-guide.md")
   tags         = merge(var.tags, { Component = "hr-policies-kb-docs" })
 }
+
+# ---------------------------------------------------------------------------
+# AgentCore CloudWatch Metric Filters — HR Assistant
+#
+# Transforms structured JSON log events from the HR Assistant container into
+# CloudWatch Metrics in the AIPlatform/AgentCore namespace. These metrics
+# feed the agent-operational-health dashboard.
+#
+# Ownership: This layer owns these filters because the event schemas
+# (agent_invoke, kb_retrieve, invocation_error) are defined by the HR
+# Assistant container code in container/app/. If the container's log event
+# field names change, update these filter patterns here.
+#
+# Log source: /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT
+# The log group is created and managed by AWS — referenced via a data source.
+#
+# AgentId dimension note: The container's operational log events do not
+# include an agent_id field — agent_id only appears in startup events
+# (agent_config_loaded, container_ready). The per-runtime log group is
+# already agent-scoped in the current single-agent deployment, so no
+# AgentId dimension is needed. When a second agent runtime is deployed,
+# add agent_id to the container's operational log events and add
+# AgentId = "$.agent_id" as a dimension to these filters.
+# ---------------------------------------------------------------------------
+
+data "aws_cloudwatch_log_group" "agentcore_runtime" {
+  name = "/aws/bedrock-agentcore/runtimes/${data.terraform_remote_state.platform.outputs.agentcore_endpoint_id}-DEFAULT"
+}
+
+# Filter 1 — AgentInvocationLatency
+# Source event: {"event":"agent_invoke","latency_ms":<int>,...}
+# Confirmed field name from live log inspection — latency_ms is present on
+# every agent_invoke event.
+resource "aws_cloudwatch_log_metric_filter" "agent_invocation_latency" {
+  name           = "hr-assistant-agent-invocation-latency-dev"
+  log_group_name = data.aws_cloudwatch_log_group.agentcore_runtime.name
+  pattern        = "{ $.event = \"agent_invoke\" }"
+
+  metric_transformation {
+    name      = "AgentInvocationLatency"
+    namespace = "AIPlatform/AgentCore"
+    value     = "$.latency_ms"
+    unit      = "Milliseconds"
+  }
+}
+
+# Filter 2 — AgentInvocationCount
+# Source event: {"event":"agent_invoke",...}
+resource "aws_cloudwatch_log_metric_filter" "agent_invocation_count" {
+  name           = "hr-assistant-agent-invocation-count-dev"
+  log_group_name = data.aws_cloudwatch_log_group.agentcore_runtime.name
+  pattern        = "{ $.event = \"agent_invoke\" }"
+
+  metric_transformation {
+    name          = "AgentInvocationCount"
+    namespace     = "AIPlatform/AgentCore"
+    value         = "1"
+    unit          = "Count"
+    default_value = 0
+  }
+}
+
+# Filter 3 — KBRetrievalCount
+# Source event: {"event":"kb_retrieve","kb_id":"<id>","passages":<int>}
+# KnowledgeBaseId dimension uses $.kb_id — the actual field name in the
+# container log event (agent.py:132). The architect's prompt assumed
+# knowledge_base_id but the container emits kb_id.
+resource "aws_cloudwatch_log_metric_filter" "kb_retrieval_count" {
+  name           = "hr-assistant-kb-retrieval-count-dev"
+  log_group_name = data.aws_cloudwatch_log_group.agentcore_runtime.name
+  pattern        = "{ $.event = \"kb_retrieve\" }"
+
+  metric_transformation {
+    name      = "KBRetrievalCount"
+    namespace = "AIPlatform/AgentCore"
+    value     = "1"
+    unit      = "Count"
+
+    # default_value omitted — AWS CloudWatch does not allow default_value
+    # and dimensions together on the same metric transformation.
+    dimensions = {
+      KnowledgeBaseId = "$.kb_id"
+    }
+  }
+}
+
+# Filter 4 — AgentInvocationErrors
+# Source event: {"event":"invocation_error","session_id":"...","error":"..."}
+# Pattern matches the structured invocation_error JSON event emitted by
+# main.py:93 logger.error(). The pattern { $.level = "ERROR" } does not
+# match — Python logging embeds the JSON as the message body; the level
+# prefix is outside the JSON payload.
+resource "aws_cloudwatch_log_metric_filter" "agent_invocation_errors" {
+  name           = "hr-assistant-agent-invocation-errors-dev"
+  log_group_name = data.aws_cloudwatch_log_group.agentcore_runtime.name
+  pattern        = "{ $.event = \"invocation_error\" }"
+
+  metric_transformation {
+    name          = "AgentInvocationErrors"
+    namespace     = "AIPlatform/AgentCore"
+    value         = "1"
+    unit          = "Count"
+    default_value = 0
+  }
+}
