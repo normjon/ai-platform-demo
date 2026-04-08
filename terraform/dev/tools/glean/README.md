@@ -162,6 +162,26 @@ X-Ray tracing is enabled (`Active` mode). The Lambda execution role holds
 packaged into the deployment ZIP (`modules/glean-stub/requirements.txt`) and
 `patch_all()` instruments outbound botocore calls.
 
+### Metric filter ownership
+
+This layer owns the `GleanCallCount` CloudWatch Metric Filter:
+
+| Filter name | `glean-call-count-dev` |
+| --- | --- |
+| Log group | AgentCore runtime log group (`/aws/agentcore/ai-platform-dev`) |
+| Pattern | Matches `glean_search` log events emitted by the HR Assistant container |
+| Metric | `GleanCallCount` in the `AIPlatform/AgentCore` namespace |
+| AMP name | `cloudwatch_AIPlatform_AgentCore_GleanCallCount_sum` |
+
+The filter is defined in `main.tf` in this layer — not in the platform or agent layers.
+This is intentional: the filter is scoped to Glean-specific log events; when the real
+Glean endpoint replaces the stub, only this layer needs to change. Future MCP tools
+must define their own metric filters in their own tool layers.
+
+The metric tracks how often the HR Assistant invokes Glean search. A sustained zero
+while `AgentInvocationCount` is high indicates the KB is satisfying all queries without
+tool use — this is expected for HR policy questions covered by the indexed documents.
+
 Query for recent tool calls:
 
 ```bash

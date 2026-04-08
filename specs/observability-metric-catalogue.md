@@ -4,7 +4,7 @@
 **Display Name:** Enterprise AI Platform
 **Owner:** platform-team
 **Environment:** dev
-**Version:** 1.0
+**Version:** 1.1
 **Last updated:** April 2026
 
 ---
@@ -16,6 +16,46 @@ AI Platform. It is the authoritative reference for the observability platform
 registration and for engineers interpreting dashboards in AMG.
 
 Custom metrics are emitted to two namespaces:
+
+---
+
+## PromQL Query Patterns — MUST READ before writing dashboard queries
+
+**All CloudWatch metrics in AMP are gauges, not Prometheus counters.**
+Each 1-minute CloudWatch aggregation period becomes a single independent
+gauge sample in AMP. The value is NOT cumulative across periods.
+
+This means `rate()` and `increase()` always return 0 on these metrics.
+Never use them for CloudWatch-sourced data. The correct patterns are:
+
+| What you want | Correct PromQL |
+|---|---|
+| Count of events in a window | `sum(sum_over_time(metric_sum{...}[window]))` |
+| Average score or latency | `metric_sum{...} / metric_count{...}` |
+| Maximum document count | `metric_max{...}` |
+
+### Why `_sum / _count` for scores
+
+The quality scorer emits one `QualityScore` data point per scored record per
+dimension. If 24 records are scored, CloudWatch aggregates all 24 values into
+`_sum` (~10.5 for correctness) and `_count` (24). Displaying raw `_sum` shows
+the batch total (10.5), not the per-record average. The correct query is:
+
+```
+cloudwatch_AIPlatform_Quality_QualityScore_sum{..., Dimension="correctness"}
+  / cloudwatch_AIPlatform_Quality_QualityScore_count{..., Dimension="correctness"}
+```
+
+This returns the average score (~0.44), which is in the expected 0.0–1.0 range.
+
+### Prometheus staleness (batch metrics)
+
+The quality scorer runs hourly via EventBridge. Stat panels using `lastNotNull`
+show "No data" when the last scorer run was >5 minutes ago — this is expected
+Prometheus staleness behaviour. Timeseries panels display historical data
+correctly regardless of how long ago the scorer last ran.
+
+---
 
 - `AIPlatform/Quality` — emitted by the LLM-as-Judge quality scorer Lambda
   (`ai-platform-dev-quality-scorer`) via explicit `put_metric_data` calls.
@@ -277,17 +317,23 @@ metrics:
                  throughput limits. Non-zero values degrade user experience
                  and scoring pipeline throughput.
 
-  - name: SuccessfulRequestCount
+  - name: 2xx
     namespace: AWS/AOSS
     source: AWS native — emitted automatically by OpenSearch Serverless
-            for the ai-platform-kb-dev collection. Counts successful
-            search and index API calls.
+            for the ai-platform-kb-dev collection. Counts successful HTTP
+            2xx API calls (search and index operations).
+            AMP metric name: cloudwatch_AWS_AOSS_2xx_sum
+            IMPORTANT: This metric is named "2xx" in CloudWatch, NOT
+            "SuccessfulRequestCount". Any panel using
+            cloudwatch_AWS_AOSS_SuccessfulRequestCount_sum will show
+            "No data" — that metric name does not exist in AOSS.
     visualisation: line
     dashboard: cost-token-consumption
-    description: Count of successful API calls to the OpenSearch Serverless
-                 KB collection. Primarily KB retrieve operations from the
-                 HR Assistant during invocation. Tracks KB utilisation
-                 and scales with agent invocation volume.
+    description: Count of successful API calls (HTTP 2xx) to the OpenSearch
+                 Serverless KB collection. Primarily KB retrieve operations
+                 from the HR Assistant during invocation. Tracks KB utilisation
+                 and scales with agent invocation volume. Filter by
+                 CollectionName="ai-platform-kb-dev" to scope to the KB collection.
 
   - name: SearchableDocuments
     namespace: AWS/AOSS
