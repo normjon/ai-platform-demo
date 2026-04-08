@@ -156,7 +156,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "cloudwatch_AWS_AOSS_SearchableDocuments_sum{environment=\"$environment\"}",
+          "expr": "cloudwatch_AWS_AOSS_SearchableDocuments_max{environment=\"$environment\"}",
           "legendFormat": "Searchable documents",
           "refId": "A"
         }
@@ -255,8 +255,8 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "rate(cloudwatch_AWS_AOSS_SuccessfulRequestCount_sum{environment=\"$environment\"}[5m])",
-          "legendFormat": "KB API calls per minute",
+          "expr": "sum_over_time(cloudwatch_AWS_AOSS_2xx_sum{environment=\"$environment\", CollectionName=\"ai-platform-kb-dev\"}[5m])",
+          "legendFormat": "KB successful API calls (5m sum)",
           "refId": "A"
         }
       ],
