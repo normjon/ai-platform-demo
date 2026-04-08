@@ -296,7 +296,7 @@
     },
     {
       "id": 7,
-      "type": "barchart",
+      "type": "timeseries",
       "title": "Below-threshold count per hour",
       "description": "Number of interactions scoring below the 0.70 quality threshold per hour for the selected agent. The CloudWatch alarm fires when this exceeds 3 in any one-hour period. A spike in below-threshold interactions following a deployment indicates a potential regression in the agent's system prompt or model configuration.",
       "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
@@ -309,15 +309,19 @@
         }
       ],
       "options": {
-        "xField": "time",
-        "stacking": "none",
         "legend": {
           "displayMode": "list",
           "placement": "bottom"
-        }
+        },
+        "tooltip": { "mode": "multi" }
       },
       "fieldConfig": {
         "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "drawStyle": "bars"
+          },
           "thresholds": {
             "mode": "absolute",
             "steps": [
