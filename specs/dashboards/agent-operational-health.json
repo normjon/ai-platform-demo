@@ -344,7 +344,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_AgentInvocationCount_sum{environment=\"$environment\"}[1h]))",
+          "expr": "sum(sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationCount_sum{environment=\"$environment\"}[1h]))",
           "legendFormat": "Invocations",
           "refId": "A"
         }
@@ -375,7 +375,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_AgentInvocationErrors_sum{environment=\"$environment\"}[1h]))",
+          "expr": "sum(sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationErrors_sum{environment=\"$environment\"}[1h]))",
           "legendFormat": "Errors",
           "refId": "A"
         }
@@ -407,7 +407,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_KBRetrievalCount_sum{environment=\"$environment\"}[1h]))",
+          "expr": "sum(sum_over_time(cloudwatch_AIPlatform_AgentCore_KBRetrievalCount_sum{environment=\"$environment\"}[1h]))",
           "legendFormat": "KB retrievals",
           "refId": "A"
         }
@@ -438,7 +438,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_GleanCallCount_sum{environment=\"$environment\"}[1h]))",
+          "expr": "sum(sum_over_time(cloudwatch_AIPlatform_AgentCore_GleanCallCount_sum{environment=\"$environment\"}[1h]))",
           "legendFormat": "Glean calls",
           "refId": "A"
         }
@@ -469,7 +469,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "avg_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_sum{environment=\"$environment\"}[5m])",
+          "expr": "sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_sum{environment=\"$environment\"}[5m]) / sum_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_count{environment=\"$environment\"}[5m])",
           "legendFormat": "Avg latency (ms)",
           "refId": "A"
         },
