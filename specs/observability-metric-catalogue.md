@@ -15,14 +15,104 @@ This catalogue documents every CloudWatch metric emitted by the Enterprise
 AI Platform. It is the authoritative reference for the observability platform
 registration and for engineers interpreting dashboards in AMG.
 
-All custom metrics are emitted to the `AIPlatform/Quality` namespace by
-the LLM-as-Judge quality scorer Lambda (`ai-platform-dev-quality-scorer`).
-No custom metrics are emitted by the HR Assistant container — operational
-signals for the agent runtime are derived from AWS-native namespaces.
+Custom metrics are emitted to two namespaces:
+
+- `AIPlatform/Quality` — emitted by the LLM-as-Judge quality scorer Lambda
+  (`ai-platform-dev-quality-scorer`) via explicit `put_metric_data` calls.
+- `AIPlatform/AgentCore` — emitted via CloudWatch Metric Filters on the
+  AgentCore runtime log group. Filters are owned by the agent and tool layers
+  that define the log event schemas (not the platform layer).
 
 ---
 
 ## Custom Metrics
+
+### AIPlatform/AgentCore
+
+```yaml
+metrics:
+  - name: AgentInvocationLatency
+    namespace: AIPlatform/AgentCore
+    source: CloudWatch Metric Filter (hr-assistant-agent-invocation-latency-dev) on
+            AgentCore runtime log group. Matches agent_invoke log events emitted by
+            the HR Assistant container (container/app/agent.py). Value extracted
+            from the latency_ms field — end-to-end agent invocation time in
+            milliseconds, measured from request receipt to response ready.
+            Owned by: agents/hr-assistant layer.
+    visualisation: line
+    dashboard: agent-operational-health
+    description: End-to-end HR Assistant agent invocation latency in milliseconds.
+                 Measures wall-clock time from request receipt to response ready,
+                 including Bedrock model invocation, KB retrieval, and tool calls.
+                 P95 above 15 000 ms indicates the agent is approaching the user
+                 experience SLO defined in the agent manifest.
+
+  - name: AgentInvocationCount
+    namespace: AIPlatform/AgentCore
+    source: CloudWatch Metric Filter (hr-assistant-agent-invocation-count-dev) on
+            AgentCore runtime log group. Matches agent_invoke log events. Emits 1
+            per completed invocation. Default value 0 when no invocations occur.
+            Owned by: agents/hr-assistant layer.
+    visualisation: line
+    dashboard: agent-operational-health
+    description: Count of completed HR Assistant agent invocations per period.
+                 Tracks agent utilisation volume. A drop while Prompt Vault writer
+                 invocations continue indicates invocations are failing before
+                 completion and not reaching the vault write path.
+
+  - name: KBRetrievalCount
+    namespace: AIPlatform/AgentCore
+    source: CloudWatch Metric Filter (hr-assistant-kb-retrieval-count-dev) on
+            AgentCore runtime log group. Matches kb_retrieve log events emitted by
+            the HR Assistant container (container/app/agent.py). Dimension:
+            KnowledgeBaseId extracted from the kb_id field.
+            Owned by: agents/hr-assistant layer.
+            Note: AWS CloudWatch does not allow default_value and dimensions
+            together — this filter has no default value; zero-retrieval periods
+            produce no data points.
+    visualisation: bar
+    dashboard: agent-operational-health
+    description: Count of Knowledge Base retrieval operations per period, broken
+                 down by KnowledgeBaseId. Each agent invocation that reaches the KB
+                 retrieval step emits one data point. A sustained zero value while
+                 AgentInvocationCount is non-zero indicates KB retrieval is being
+                 skipped — check the agent's grounding_score_min threshold and
+                 whether the KB contains documents.
+
+  - name: AgentInvocationErrors
+    namespace: AIPlatform/AgentCore
+    source: CloudWatch Metric Filter (hr-assistant-agent-invocation-errors-dev) on
+            AgentCore runtime log group. Matches invocation_error log events emitted
+            by main.py when the agent.invoke() call raises an unhandled exception.
+            Default value 0 when no errors occur.
+            Owned by: agents/hr-assistant layer.
+    visualisation: bar
+    dashboard: agent-operational-health
+    description: Count of unhandled HR Assistant agent invocation errors per period.
+                 Any non-zero value warrants immediate investigation — the agent
+                 returned HTTP 500 to the caller. Check the AgentCore runtime log
+                 group for the invocation_error event and accompanying traceback.
+
+  - name: GleanCallCount
+    namespace: AIPlatform/AgentCore
+    source: CloudWatch Metric Filter (glean-call-count-dev) on AgentCore runtime
+            log group. Matches glean_search log events emitted by the HR Assistant
+            container (container/app/agent.py) when the Glean MCP tool is invoked.
+            Named GleanCallCount rather than ToolCallCount because this filter only
+            matches glean_search events — future MCP tools will have different event
+            names and should define their own filters in their respective tool layers.
+            Default value 0 when Glean is not called.
+            Owned by: tools/glean layer.
+    visualisation: bar
+    dashboard: agent-operational-health
+    description: Count of Glean Search MCP tool invocations per period. Tracks how
+                 often the HR Assistant escalates to enterprise search. A sustained
+                 zero while AgentInvocationCount is high indicates the KB is
+                 satisfying all queries without tool use — expected for HR policy
+                 questions well-covered by the indexed documents.
+```
+
+### AIPlatform/Quality
 
 ```yaml
 metrics:
