@@ -129,3 +129,43 @@ resource "aws_bedrockagentcore_gateway_target" "glean_stub" {
     }
   }
 }
+
+# ---------------------------------------------------------------------------
+# AgentCore CloudWatch Metric Filter — Glean Tool
+#
+# Transforms glean_search log events from the HR Assistant container into
+# a CloudWatch Metric in the AIPlatform/AgentCore namespace.
+#
+# Ownership: This layer owns this filter because the glean_search event is
+# emitted by the Glean tool integration code in the HR Assistant container
+# (agent.py:175). When a real Glean endpoint replaces the stub, the event
+# name and schema remain the same — no filter change required.
+#
+# Named GleanCallCount (not ToolCallCount) because this filter only matches
+# glean_search events. When additional MCP tools are added they will have
+# different event names — each tool layer should define its own filter.
+#
+# Log source: /aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT
+# Runtime ID is read from platform remote state, which this layer already
+# consumes for the gateway registration.
+# ---------------------------------------------------------------------------
+
+data "aws_cloudwatch_log_group" "agentcore_runtime" {
+  name = "/aws/bedrock-agentcore/runtimes/${data.terraform_remote_state.platform.outputs.agentcore_endpoint_id}-DEFAULT"
+}
+
+# Filter 5 — GleanCallCount
+# Source event: {"event":"glean_search","query":"...","result_chars":<int>}
+resource "aws_cloudwatch_log_metric_filter" "glean_call_count" {
+  name           = "glean-call-count-dev"
+  log_group_name = data.aws_cloudwatch_log_group.agentcore_runtime.name
+  pattern        = "{ $.event = \"glean_search\" }"
+
+  metric_transformation {
+    name          = "GleanCallCount"
+    namespace     = "AIPlatform/AgentCore"
+    value         = "1"
+    unit          = "Count"
+    default_value = 0
+  }
+}

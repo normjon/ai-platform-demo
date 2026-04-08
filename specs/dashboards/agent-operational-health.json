@@ -326,6 +326,185 @@
           }
         }
       }
+    },
+    {
+      "id": 9,
+      "type": "row",
+      "title": "AIPlatform/AgentCore — Agent-level signals",
+      "description": "Metrics emitted via CloudWatch Metric Filters on the AgentCore runtime log group. True agent-level signals derived from structured JSON log events, not Lambda proxy metrics.",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 1 },
+      "collapsed": false
+    },
+    {
+      "id": 10,
+      "type": "stat",
+      "title": "Agent invocations — last 1h",
+      "description": "Count of completed HR Assistant agent invocations in the last hour. Derived from agent_invoke log events via CloudWatch Metric Filter. A drop while Prompt Vault writer invocations continue indicates invocations are failing before completion.",
+      "gridPos": { "x": 0, "y": 29, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "targets": [
+        {
+          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_AgentInvocationCount_sum{environment=\"$environment\"}[1h]))",
+          "legendFormat": "Invocations",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Agent invocation errors — last 1h",
+      "description": "Count of unhandled HR Assistant agent invocation errors in the last hour. Derived from invocation_error log events. Any non-zero value means the agent returned HTTP 500 — check the AgentCore runtime log group immediately.",
+      "gridPos": { "x": 6, "y": 29, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "targets": [
+        {
+          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_AgentInvocationErrors_sum{environment=\"$environment\"}[1h]))",
+          "legendFormat": "Errors",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "KB retrievals — last 1h",
+      "description": "Count of Knowledge Base retrieval operations in the last hour. Derived from kb_retrieve log events. A sustained zero while agent invocations are non-zero indicates KB retrieval is being skipped.",
+      "gridPos": { "x": 12, "y": 29, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "targets": [
+        {
+          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_KBRetrievalCount_sum{environment=\"$environment\"}[1h]))",
+          "legendFormat": "KB retrievals",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Glean tool calls — last 1h",
+      "description": "Count of Glean Search MCP tool invocations in the last hour. Derived from glean_search log events. Expected to be low when the KB is satisfying queries without tool use.",
+      "gridPos": { "x": 18, "y": 29, "w": 6, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "targets": [
+        {
+          "expr": "sum(increase(cloudwatch_AIPlatform_AgentCore_GleanCallCount_sum{environment=\"$environment\"}[1h]))",
+          "legendFormat": "Glean calls",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": 14,
+      "type": "timeseries",
+      "title": "Agent invocation latency over time (ms)",
+      "description": "End-to-end HR Assistant agent invocation latency in milliseconds. Derived from the latency_ms field in agent_invoke log events. Includes Bedrock model invocation, KB retrieval, and any tool calls. Values above 15 000 ms indicate the agent is approaching the user experience SLO.",
+      "gridPos": { "x": 0, "y": 33, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "amp-dev" },
+      "targets": [
+        {
+          "expr": "avg_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_sum{environment=\"$environment\"}[5m])",
+          "legendFormat": "Avg latency (ms)",
+          "refId": "A"
+        },
+        {
+          "expr": "max_over_time(cloudwatch_AIPlatform_AgentCore_AgentInvocationLatency_max{environment=\"$environment\"}[5m])",
+          "legendFormat": "Max latency (ms)",
+          "refId": "B"
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": ["last", "min", "max"]
+        },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5000 },
+              { "color": "orange", "value": 10000 },
+              { "color": "red", "value": 15000 }
+            ]
+          }
+        }
+      }
     }
   ]
 }
