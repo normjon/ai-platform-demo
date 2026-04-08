@@ -61,7 +61,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(sum_over_time(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Input tokens",
           "refId": "A"
         }
@@ -92,7 +92,7 @@
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(sum_over_time(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Output tokens",
           "refId": "A"
         }
@@ -181,29 +181,37 @@
     },
     {
       "id": 5,
-      "type": "barchart",
+      "type": "timeseries",
       "title": "Input and output tokens per day",
       "description": "Daily total input and output tokens consumed by Bedrock models across the platform. Use this chart to understand token consumption trends and project costs. A sudden spike in input tokens may indicate excessively large context windows or a runaway loop in the agent invocation logic.",
       "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
       "datasource": { "type": "prometheus", "uid": "amp-dev" },
       "targets": [
         {
-          "expr": "sum(increase(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(sum_over_time(cloudwatch_AWS_Bedrock_InputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Input tokens",
           "refId": "A"
         },
         {
-          "expr": "sum(increase(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
+          "expr": "sum(sum_over_time(cloudwatch_AWS_Bedrock_OutputTokenCount_sum{environment=\"$environment\"}[1d]))",
           "legendFormat": "Output tokens",
           "refId": "B"
         }
       ],
       "options": {
-        "xField": "time",
-        "stacking": "none",
         "legend": {
           "displayMode": "list",
           "placement": "bottom"
+        },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "drawStyle": "bars"
+          }
         }
       }
     },
