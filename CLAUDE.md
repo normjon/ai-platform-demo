@@ -396,9 +396,9 @@ the layer directory before running any Terraform command.
 
   # Teardown in reverse order:
   # IMPORTANT: agents and tools MUST be destroyed before platform.
-  # platform/main.tf has data "aws_lambda_function" "prompt_vault_writer" which
-  # reads the Prompt Vault Lambda at plan time. If agents layer is not destroyed
-  # first (Lambda deleted), platform destroy will fail with ResourceNotFoundException.
+  # The tools layer registers gateway targets against the platform gateway —
+  # destroying platform while targets exist fails with "Gateway has targets associated".
+  # Destroy agents and tools first to cleanly remove targets and agent resources.
 
   cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
   cd terraform/dev/tools/glean && terraform destroy -auto-approve
@@ -438,7 +438,7 @@ Only these model ARNs may be used in any Terraform resource,
 agent manifest, or application code in this repository:
 
   Region (all environments):  us-east-2
-  Primary reasoning (dev):    anthropic.claude-sonnet-4-6
+  Primary reasoning (dev):    us.anthropic.claude-sonnet-4-6
   Evaluation/scoring:         us.anthropic.claude-haiku-4-5-20251001-v1:0
   Embeddings:                 amazon.titan-embed-text-v2:0
 

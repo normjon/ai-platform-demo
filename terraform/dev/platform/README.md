@@ -52,9 +52,9 @@ run on top of:
 
 | Resource | Name | Purpose |
 | --- | --- | --- |
-| CloudWatch Log Group | `/aws/agentcore/ai-platform-dev` | AgentCore runtime structured JSON logs |
+| CloudWatch Log Group | `/aws/agentcore/ai-platform-dev` | Platform-managed log group (provisioned by `module.observability`). AgentCore container runtime logs go to the AWS-managed path `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT` — see the agent layer README for the correct query path. |
 | CloudWatch Log Group | `/aws/bedrock/knowledge-base/ai-platform-dev` | Bedrock KB ingestion logs |
-| CloudWatch Alarm | `ai-platform-dev-agentcore-errors` | Fires on AgentCore error count > 0 |
+| CloudWatch Alarm | `ai-platform-dev-agentcore-errors` | Fires on AgentCore error count > 5 in a 5-minute window |
 | CloudWatch Alarm | `ai-platform-dev-agentcore-p99-latency` | Fires on p99 invocation latency threshold |
 
 ---
@@ -313,14 +313,16 @@ panel shows "No data", invoke the scorer manually (command above) to get a fresh
 
 | Log group | Content |
 | --- | --- |
-| `/aws/agentcore/ai-platform-dev` | Structured JSON from the AgentCore runtime. All agent invocations, tool calls, and errors appear here. |
+| `/aws/agentcore/ai-platform-dev` | Platform-managed log group provisioned by `module.observability`. **AgentCore container runtime logs do not go here** — they go to the AWS-managed path below. |
+| `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT` | AWS-managed log group where AgentCore writes all container runtime logs: agent invocations, tool calls, KB retrievals, and errors. Resolve `<runtime-id>` from `terraform output -raw agentcore_endpoint_id` in the platform layer. |
 | `/aws/bedrock/knowledge-base/ai-platform-dev` | Bedrock KB ingestion job results. |
 
-Query the AgentCore log group for recent errors:
+Query the AgentCore runtime log group for recent errors:
 
 ```bash
+RUNTIME_ID=$(terraform -chdir=terraform/dev/platform output -raw agentcore_endpoint_id)
 aws logs filter-log-events \
-  --log-group-name /aws/agentcore/ai-platform-dev \
+  --log-group-name "/aws/bedrock-agentcore/runtimes/${RUNTIME_ID}-DEFAULT" \
   --region us-east-2 \
   --filter-pattern '{ $.level = "ERROR" }' \
   --start-time $(date -v-1H +%s000) \
@@ -332,7 +334,7 @@ aws logs filter-log-events \
 
 | Alarm | Condition | Action |
 | --- | --- | --- |
-| `ai-platform-dev-agentcore-errors` | Error count > 0 | Investigate `/aws/agentcore/ai-platform-dev` |
+| `ai-platform-dev-agentcore-errors` | Error count > 5 in a 5-minute window | Investigate `/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT` |
 | `ai-platform-dev-agentcore-p99-latency` | p99 latency above threshold | Check runtime configuration and model |
 
 Check alarm states:

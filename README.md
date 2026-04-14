@@ -64,9 +64,9 @@ vs real image) is at `terraform/dev/agents/hr-assistant/README.md`.
     │   │       ├── outputs.tf
     │   │       └── terraform.tfvars.example
     │   └── agents/
-    │       └── hr-assistant/   # HR Assistant agent (placeholder)
+    │       └── hr-assistant/   # HR Assistant agent — arm64 container, KB, guardrail, Prompt Vault
     │           ├── backend.tf      # State key: dev/agents/hr-assistant/terraform.tfstate
-    │           ├── main.tf         # Agent-specific config (placeholder)
+    │           ├── main.tf         # System prompt, guardrail, KB, Prompt Vault Lambda, agent manifest
     │           ├── variables.tf
     │           ├── outputs.tf
     │           └── terraform.tfvars.example
@@ -153,27 +153,19 @@ terraform apply tfplan
 
 # 8. Apply the HR Assistant agent layer (provisions Prompt Vault Lambda, KB, guardrail, agent manifest)
 cp terraform/dev/agents/hr-assistant/terraform.tfvars.example terraform/dev/agents/hr-assistant/terraform.tfvars
-# Edit with your account values (model_arn, knowledge_base_id, etc.)
+# Edit with your account values (account_id)
 cd ../agents/hr-assistant
 terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 # After apply: run KB ingestion (see terraform/dev/agents/hr-assistant/README.md)
-
-# ---- Platform re-apply (wires Prompt Vault Lambda into AgentCore runtime) ----
-
-# 9. Re-apply platform layer — the platform reads the Prompt Vault Lambda ARN via
-#    data "aws_lambda_function" which requires the agents layer to be applied first.
-cd ../../platform
-terraform plan -out=tfplan
-terraform apply tfplan
 ```
 
-> **Apply order note:** The agents layer must be applied before the final platform
-> apply because `data "aws_lambda_function" "prompt_vault_writer"` in `platform/main.tf`
-> reads the Prompt Vault Lambda ARN from AWS at plan time. If the Lambda does not exist,
-> the platform plan will fail. This is the one exception to the strict foundation →
-> platform → tools → agents ordering.
+> **Apply order note:** The standard foundation → platform → tools → agents ordering
+> is sufficient. The platform layer has no dependency on any agent Lambda at plan time.
+> The Prompt Vault Lambda ARN is registered by the agent layer's `local-exec` into the
+> DynamoDB agent registry and read by the container at startup — no platform re-apply
+> is required after applying the agents layer.
 
 ## Iterative Dev Cycle
 
