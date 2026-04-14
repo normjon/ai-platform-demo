@@ -191,11 +191,11 @@ AgentCore runtime endpoint. When a native resource becomes available (expected:
 `aws_bedrockagentcore_agent_configuration` or equivalent), replace the `terraform_data`
 block in `main.tf`.
 
-**Manifest fields registered (Phase 2):** `agent_id`, `display_name`, `model_arn`,
-`system_prompt_arn`, `guardrail_id`, `guardrail_version`, `endpoint_id`, `gateway_id`,
-`knowledge_base_id`, `allowed_tools`, `data_classification_ceiling`, `session_ttl_hours`,
-`grounding_score_min`, `response_latency_p95_ms`, `monthly_usd_limit`,
-`alert_threshold_pct`, `environment`, `registered_at`.
+**Manifest fields registered (Phase 2):** `agent_id`, `display_name`, `agent_description`,
+`model_arn`, `system_prompt_arn`, `guardrail_id`, `guardrail_version`, `endpoint_id`,
+`gateway_id`, `knowledge_base_id`, `allowed_tools`, `data_classification_ceiling`,
+`session_ttl_hours`, `grounding_score_min`, `response_latency_p95_ms`, `monthly_usd_limit`,
+`alert_threshold_pct`, `environment`, `registered_at`, `prompt_vault_lambda_arn`.
 
 To verify the manifest is registered:
 
@@ -253,10 +253,11 @@ writes a structured JSON interaction record to S3.
 
 **Bucket:** `ai-platform-dev-prompt-vault-096305373014` (re-exported from platform)
 
-**Env var wiring:** The platform layer injects `PROMPT_VAULT_LAMBDA` into the
-AgentCore runtime via `data "aws_lambda_function" "prompt_vault_writer"` — the
-platform reads the Lambda ARN from AWS (not agent remote state) and passes it to
-`module.agentcore` as `prompt_vault_lambda_arn`. If `PROMPT_VAULT_LAMBDA` is unset,
+**Env var wiring:** The Lambda ARN is registered in the platform DynamoDB agent
+registry by this layer's `terraform_data + local-exec` block under the field
+`prompt_vault_lambda_arn`. The AgentCore container reads it at startup via
+`agent._load_config()` and passes it to `vault.init()`. The platform layer has no
+direct knowledge of the Lambda ARN. If the field is absent from the registry,
 vault writes are silently skipped (logged as `vault_skip`).
 
 **Guardrail fields:** Every record includes `guardrailResult.action`. On happy-path

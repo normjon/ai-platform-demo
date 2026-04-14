@@ -168,7 +168,7 @@ This layer owns the `GleanCallCount` CloudWatch Metric Filter:
 
 | Filter name | `glean-call-count-dev` |
 | --- | --- |
-| Log group | AgentCore runtime log group (`/aws/agentcore/ai-platform-dev`) |
+| Log group | AgentCore runtime log group (`/aws/bedrock-agentcore/runtimes/<runtime-id>-DEFAULT`) — `runtime-id` resolved from platform output `agentcore_endpoint_id` |
 | Pattern | Matches `glean_search` log events emitted by the HR Assistant container |
 | Metric | `GleanCallCount` in the `AIPlatform/AgentCore` namespace |
 | AMP name | `cloudwatch_AIPlatform_AgentCore_GleanCallCount_sum` |

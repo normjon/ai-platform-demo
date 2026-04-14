@@ -12,12 +12,11 @@ AgentCore runtime endpoint and MCP Gateway for the dev environment.
 The ECR repository is managed by the **foundation layer** (`terraform/dev/foundation/`).
 The module receives `ecr_repository_url` as an input variable.
 
-The **MCP Gateway Target** is managed directly in `terraform/dev/app/main.tf` as
+The **MCP Gateway Target** is managed by `terraform/dev/tools/glean/main.tf` as
 `aws_bedrockagentcore_gateway_target.glean_stub` — not inside this module. It
 depends on both this module (gateway_id) and the glean-stub module (function_url),
-so it lives at the app layer root. In dev, the target points to the Lambda-backed
-MCP stub (`modules/glean-stub`). See the Gateway Target Deployment section for
-how to transition to a real Glean endpoint.
+so it lives in the tools/glean layer. See `terraform/dev/tools/glean/README.md`
+for the operational runbook and Known Issues around gateway target lifecycle.
 
 ## Input Variables
 
@@ -34,7 +33,7 @@ how to transition to a real Glean endpoint.
 | `session_memory_table` | string | DynamoDB table name for session memory |
 | `agent_registry_table` | string | DynamoDB table name for agent registry |
 | `agentcore_role_arn` | string | IAM role ARN assumed by AgentCore runtime (IRSA) |
-| `log_group_agentcore` | string | CloudWatch log group name for invocation logs |
+| `log_group_agentcore` | string | CloudWatch log group name (platform-managed; accepted for contract completeness) |
 | `tags` | map(string) | Tags applied to all resources |
 
 ## Critical constraints
@@ -73,80 +72,32 @@ docker buildx build \
   --push \
   -t "${IMAGE_URI}" .
 
-# Update app/terraform.tfvars with the real URI
-echo "agent_image_uri = \"${IMAGE_URI}\"" >> ../app/terraform.tfvars
+# Set agent_image_uri in terraform/dev/platform/terraform.tfvars
+echo "agent_image_uri = \"${IMAGE_URI}\""
 ```
 
-**Step 3 — apply app layer (creates runtime and gateway):**
+**Step 3 — apply the platform layer (creates runtime and gateway):**
 ```bash
-cd ../app
+cd terraform/dev/platform
 terraform apply
 ```
 
-On subsequent app layer applies (after the image already exists in ECR),
+**Step 4 — apply the tools/glean layer (registers gateway target):**
+```bash
+cd terraform/dev/tools/glean
+terraform apply
+```
+
+On subsequent applies (after the image already exists in ECR),
 no changes to the foundation layer are needed.
 
-## Gateway Target Deployment (Glean Search)
+## IAM
 
-The `aws_bedrockagentcore_gateway_target` resource is **not managed by
-Terraform** because AWS validates live connectivity to the MCP endpoint at
-create time. A placeholder or unreachable URL always produces a `FAILED`
-target, which cannot be deleted and blocks gateway deletion on destroy.
-
-Once a real Glean MCP endpoint is reachable from the VPC, deploy the target
-manually:
-
-```bash
-GATEWAY_ID=$(cd terraform/dev/app && terraform output -raw agentcore_gateway_id 2>/dev/null \
-  || aws bedrock-agentcore-control list-gateways --region us-east-2 \
-     --query 'gateways[?name==`ai-platform-dev-mcp-gateway`].gatewayId' \
-     --output text)
-
-aws bedrock-agentcore-control create-gateway-target \
-  --gateway-identifier "${GATEWAY_ID}" \
-  --name "glean-search" \
-  --description "Glean Enterprise Search MCP tool" \
-  --target-configuration '{
-    "mcp": {
-      "mcpServer": {
-        "endpoint": "https://<your-glean-mcp-endpoint>"
-      }
-    }
-  }' \
-  --region us-east-2
-```
-
-**Before destroying the app layer**, delete any registered targets first or
-`terraform destroy` will fail with "Gateway has targets associated with it":
-
-```bash
-# List targets (response key is "items", not "gatewayTargets")
-aws bedrock-agentcore-control list-gateway-targets \
-  --gateway-identifier "${GATEWAY_ID}" --region us-east-2 \
-  --query 'items[].{targetId:targetId,name:name,status:status}' \
-  --output table
-
-# Delete each target
-aws bedrock-agentcore-control delete-gateway-target \
-  --gateway-identifier "${GATEWAY_ID}" \
-  --target-id <target-id> \
-  --region us-east-2
-```
-
-**Required IAM actions** for gateway target management:
-`bedrock-agentcore:CreateGatewayTarget`, `bedrock-agentcore:DeleteGatewayTarget`,
-`bedrock-agentcore:ListGatewayTargets`, `bedrock-agentcore:GetGatewayTarget`
-
-These are granted to the `agentcore_runtime` role by the `iam/` module.
-If your SSO admin role is denied these actions, check for an SCP blocking
-`bedrock-agentcore:*` actions in the account — this is a known behaviour
-for recently-GA'd AgentCore APIs.
-
-## Agent Container Documentation
-
-Full documentation on the HR Assistant container — purpose, arm64 requirement,
-placeholder vs real image, image tag policy, ECR repository, and rebuild
-workflow — is at `terraform/dev/agents/hr-assistant/README.md`.
+Gateway target management actions (`bedrock-agentcore:CreateGatewayTarget`,
+`bedrock-agentcore:DeleteGatewayTarget`, `bedrock-agentcore:GetGatewayTarget`,
+`bedrock-agentcore:ListGatewayTargets`, `bedrock-agentcore:UpdateGatewayTarget`)
+are granted to the `agentcore_runtime` role inline in
+`terraform/dev/platform/main.tf` — not in any reusable module.
 
 ## Building Python dependencies for arm64
 
@@ -161,3 +112,9 @@ uv pip install \
 ```
 
 Never omit `--only-binary=:all:` — it is required for cross-platform compatibility (ADR-004).
+
+## Agent Container Documentation
+
+Full documentation on the HR Assistant container — purpose, arm64 requirement,
+placeholder vs real image, image tag policy, ECR repository, and rebuild
+workflow — is at `terraform/dev/agents/hr-assistant/README.md`.

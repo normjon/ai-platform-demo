@@ -29,17 +29,17 @@ Current Lambda functions with tracing enabled:
 | --- | --- |
 | `ai-platform-dev-glean-stub` | `terraform/dev/tools/glean/` |
 | `hr-assistant-prompt-vault-writer-dev` | `terraform/dev/agents/hr-assistant/` |
+| `ai-platform-dev-quality-scorer` | `terraform/dev/platform/` |
 
 **X-Ray group population:** The group filter is `annotation.Platform = "<name_prefix>"`.
-To appear in the group's ServiceMap view, Lambda handlers should call:
-
-```python
-from aws_xray_sdk.core import xray_recorder
-xray_recorder.put_annotation("Platform", "ai-platform-dev")
-```
-
-Without this annotation, traces are still sampled and visible in the X-Ray console
-— they just do not appear in the platform group's filtered view.
+Traces are sampled and visible in the X-Ray console regardless of annotation. To appear
+in the platform group's filtered ServiceMap view, a subsegment annotation is needed —
+but do NOT call `xray_recorder.put_annotation()` directly in a Lambda handler.
+Lambda's X-Ray runtime creates a `FacadeSegment` before the handler executes, and
+`FacadeSegments` cannot be mutated — the call raises `FacadeSegmentMutationException`
+and crashes the handler silently (the function returns HTTP 500 with no useful log).
+The `tracing_config { mode = "Active" }` and `patch_all()` are sufficient for Lambda
+X-Ray instrumentation without annotations.
 
 ## Log format requirement
 

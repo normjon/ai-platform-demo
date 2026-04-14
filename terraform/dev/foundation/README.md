@@ -28,7 +28,7 @@ owned by the layer that uses them (platform/, tools/, agents/).
 
 | Module / Resource | What it creates |
 | --- | --- |
-| `module.networking` | VPC, 2 private subnets, route table, security group, 4 VPC endpoints |
+| `module.networking` | VPC, 2 private subnets, route table, security group, 9 VPC endpoints (2 gateway + 7 interface) |
 | `module.kms` | KMS CMK + alias + key policy |
 | `aws_ecr_repository.agent` | ECR repo for the HR Assistant container — IMMUTABLE tags |
 
@@ -36,10 +36,15 @@ owned by the layer that uses them (platform/, tools/, agents/).
 
 | Endpoint | Type | Purpose |
 | --- | --- | --- |
-| `com.amazonaws.us-east-2.bedrock-runtime` | Interface | AgentCore model invocations stay within VPC |
+| `com.amazonaws.us-east-2.s3` | Gateway | S3 reads/writes via route table — no NAT required |
+| `com.amazonaws.us-east-2.dynamodb` | Gateway | DynamoDB session memory and agent registry — no NAT required |
+| `com.amazonaws.us-east-2.bedrock-runtime` | Interface | Bedrock model invocations stay within VPC |
 | `com.amazonaws.us-east-2.logs` | Interface | CloudWatch log writes stay within VPC |
-| `com.amazonaws.us-east-2.dynamodb` | Gateway | DynamoDB session memory stays within VPC |
-| `com.amazonaws.us-east-2.s3` | Gateway | S3 reads/writes stay within VPC |
+| `com.amazonaws.us-east-2.bedrock-agent` | Interface | Bedrock Prompt Management (GetPrompt) and agent control plane |
+| `com.amazonaws.us-east-2.bedrock-agent-runtime` | Interface | Knowledge Base retrieve() calls from agent container |
+| `com.amazonaws.us-east-2.lambda` | Interface | Agent container invokes Glean stub and Prompt Vault Lambda |
+| `com.amazonaws.us-east-2.ecr.api` | Interface | ECR control plane (GetAuthorizationToken) for image pull |
+| `com.amazonaws.us-east-2.ecr.dkr` | Interface | ECR Docker registry (image layer download) |
 
 ---
 

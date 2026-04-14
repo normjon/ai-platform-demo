@@ -66,15 +66,9 @@ resource "aws_bedrockagentcore_gateway" "mcp" {
 }
 
 # ---------------------------------------------------------------------------
-# Gateway Target (Glean Search) - NOT managed by Terraform.
+# Gateway Target (Glean Search) — managed by terraform/dev/tools/glean/main.tf.
 #
-# aws_bedrockagentcore_gateway_target validates live connectivity to the MCP
-# endpoint at CREATE time. A placeholder URL will always produce a FAILED
-# target. This resource must be created manually once a real Glean MCP
-# endpoint is available and verified reachable from the VPC.
-#
-# Deployment procedure: see terraform/modules/agentcore/README.md
-# Required IAM actions: bedrock-agentcore:CreateGatewayTarget,
-#                       bedrock-agentcore:DeleteGatewayTarget,
-#                       bedrock-agentcore:ListGatewayTargets
+# The target is defined in the tools/glean layer so that it can be destroyed
+# and reapplied independently of the platform and this module.
+# See terraform/dev/tools/glean/README.md for the operational runbook.
 # ---------------------------------------------------------------------------
