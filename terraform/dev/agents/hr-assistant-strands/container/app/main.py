@@ -16,7 +16,7 @@ import logging
 import os
 
 import boto3
-from fastapi import FastAPI, Request, Response
+from fastapi import BackgroundTasks, FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
 # ---------------------------------------------------------------------------
@@ -174,7 +174,7 @@ async def health() -> dict:
 # ---------------------------------------------------------------------------
 
 @app.post("/invocations")
-async def invocations(request: Request) -> Response:
+async def invocations(request: Request, background_tasks: BackgroundTasks) -> Response:
     """
     Receive an invocation from the AgentCore runtime.
 
@@ -228,8 +228,11 @@ async def invocations(request: Request) -> Response:
         latency_ms=result["latency_ms"],
     )
 
-    # Fire-and-forget CloudWatch custom metrics
-    _emit_invocation_metrics(
+    # Emit CloudWatch metrics after the response is sent (background thread).
+    # BackgroundTasks runs sync functions in a thread pool, so put_metric_data
+    # does not block the event loop or delay the response to AgentCore.
+    background_tasks.add_task(
+        _emit_invocation_metrics,
         latency_ms=result["latency_ms"],
         input_tokens=result["input_tokens"],
         output_tokens=result["output_tokens"],
