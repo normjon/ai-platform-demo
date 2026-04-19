@@ -4,6 +4,12 @@
 This is level 3 of the three-level CLAUDE.md hierarchy (ADR-021).
 Read the project-root CLAUDE.md and the architecture document before reading this file.
 
+**boto3 implementation.** A parallel Strands SDK implementation exists at
+`terraform/dev/agents/hr-assistant-strands/`. That layer reads this layer's outputs
+(guardrail, KB, system prompt, Prompt Vault Lambda ARN) as Terraform variables and
+owns its own AgentCore runtime. Apply **this** layer first. For Strands-specific
+pitfalls and debugging, read `terraform/dev/agents/hr-assistant-strands/CLAUDE.md`.
+
 ---
 
 ## What This Layer Owns

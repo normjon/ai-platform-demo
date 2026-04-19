@@ -64,9 +64,15 @@ vs real image) is at `terraform/dev/agents/hr-assistant/README.md`.
     │   │       ├── outputs.tf
     │   │       └── terraform.tfvars.example
     │   └── agents/
-    │       └── hr-assistant/   # HR Assistant agent — arm64 container, KB, guardrail, Prompt Vault
-    │           ├── backend.tf      # State key: dev/agents/hr-assistant/terraform.tfstate
-    │           ├── main.tf         # System prompt, guardrail, KB, Prompt Vault Lambda, agent manifest
+    │       ├── hr-assistant/   # HR Assistant agent — boto3 impl, KB, guardrail, Prompt Vault (owns shared resources)
+    │       │   ├── backend.tf      # State key: dev/agents/hr-assistant/terraform.tfstate
+    │       │   ├── main.tf         # System prompt, guardrail, KB, Prompt Vault Lambda, agent manifest
+    │       │   ├── variables.tf
+    │       │   ├── outputs.tf
+    │       │   └── terraform.tfvars.example
+    │       └── hr-assistant-strands/ # HR Assistant agent — Strands SDK impl (parallel runtime, shares hr-assistant resources)
+    │           ├── backend.tf      # State key: dev/agents/hr-assistant-strands/terraform.tfstate
+    │           ├── main.tf         # AgentCore runtime, log group, agent manifest (no KB/guardrail — read from hr-assistant)
     │           ├── variables.tf
     │           ├── outputs.tf
     │           └── terraform.tfvars.example
@@ -151,7 +157,7 @@ terraform apply tfplan
 
 # ---- Agents layer (each agent team runs their own) ----
 
-# 8. Apply the HR Assistant agent layer (provisions Prompt Vault Lambda, KB, guardrail, agent manifest)
+# 8. Apply the HR Assistant agent layer (boto3 — provisions Prompt Vault Lambda, KB, guardrail, agent manifest)
 cp terraform/dev/agents/hr-assistant/terraform.tfvars.example terraform/dev/agents/hr-assistant/terraform.tfvars
 # Edit with your account values (account_id)
 cd ../agents/hr-assistant
@@ -159,6 +165,15 @@ terraform init
 terraform plan -out=tfplan
 terraform apply tfplan
 # After apply: run KB ingestion (see terraform/dev/agents/hr-assistant/README.md)
+
+# 9. (Optional) Apply the HR Assistant Strands layer (parallel Strands SDK runtime)
+# Requires hr-assistant layer applied first — reads its outputs as variables.
+cp terraform/dev/agents/hr-assistant-strands/terraform.tfvars.example terraform/dev/agents/hr-assistant-strands/terraform.tfvars
+# Populate from hr-assistant outputs (guardrail_id, knowledge_base_id, etc.)
+cd ../hr-assistant-strands
+terraform init
+terraform plan -out=tfplan
+terraform apply tfplan
 ```
 
 > **Apply order note:** The standard foundation → platform → tools → agents ordering
@@ -201,7 +216,8 @@ cd terraform/dev/tools/glean && terraform plan -out=tfplan && terraform apply tf
 Destroy in reverse dependency order. Never destroy foundation while platform is up.
 
 ```bash
-# Destroy tools and agents first (order within this group doesn't matter)
+# Destroy tools and agents first (Strands layer before hr-assistant — both before platform)
+cd terraform/dev/agents/hr-assistant-strands && terraform destroy -auto-approve
 cd terraform/dev/tools/glean && terraform destroy -auto-approve
 cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
 

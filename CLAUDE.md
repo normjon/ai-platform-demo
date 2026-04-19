@@ -46,6 +46,7 @@ Layer READMEs:
 - terraform/dev/platform/README.md
 - terraform/dev/tools/glean/README.md
 - terraform/dev/agents/hr-assistant/README.md
+- terraform/dev/agents/hr-assistant-strands/README.md
 
 ### 3 — ADR Library
 
@@ -204,10 +205,12 @@ staging or production resources.
 - KMS key for encryption
 - One AgentCore endpoint (internal, dev configuration)
 - MCP Gateway with stubbed Glean Search Lambda tool
-- One agent (HR Assistant) — arm64 container, live invocations
+- Two agent implementations for the HR Assistant — both live in parallel:
+  - `agents/hr-assistant` — boto3 agentic loop (owns KB, guardrail, system prompt, Prompt Vault Lambda)
+  - `agents/hr-assistant-strands` — Strands SDK loop (shares hr-assistant resources; owns its own AgentCore runtime)
 - DynamoDB tables for session memory and agent registry
-- S3 bucket for Prompt Vault
-- CloudWatch log groups and basic alarms
+- S3 bucket for Prompt Vault (also used by Strands `S3SessionManager` under `strands-sessions/` prefix)
+- CloudWatch log groups and basic alarms; custom metrics in `bedrock-agentcore` namespace
 - Shared OpenSearch Serverless collection (`ai-platform-kb-dev`) — owned by platform layer
 - HR Policies Knowledge Base (Bedrock KB + per-index AOSS access policy) — owned by hr-assistant layer
 - 8 HR policy documents in document landing S3 bucket
@@ -282,9 +285,16 @@ independently without touching platform or foundation.
       │     terraform.tfvars.example
       │
       agents/
-         hr-assistant/    # HR Assistant agent configuration.
-            backend.tf    # Reads platform remote state.
-            main.tf       # Agent team ownership boundary.
+         hr-assistant/         # HR Assistant — boto3 impl. Owns KB, guardrail, system prompt, Prompt Vault Lambda.
+            backend.tf         # Reads platform remote state.
+            main.tf            # Agent team ownership boundary.
+            variables.tf
+            outputs.tf
+            terraform.tfvars
+            terraform.tfvars.example
+         hr-assistant-strands/ # HR Assistant — Strands SDK impl (parallel runtime, shares hr-assistant resources).
+            backend.tf         # Reads platform remote state.
+            main.tf            # AgentCore runtime + registry entry. No KB/guardrail — reads from hr-assistant.
             variables.tf
             outputs.tf
             terraform.tfvars
@@ -302,10 +312,11 @@ independently without touching platform or foundation.
 
 ### State key convention (one per layer):
 
-  foundation:          dev/foundation/terraform.tfstate
-  platform:            dev/platform/terraform.tfstate
-  tools/glean:         dev/tools/glean/terraform.tfstate
-  agents/hr-assistant: dev/agents/hr-assistant/terraform.tfstate
+  foundation:                   dev/foundation/terraform.tfstate
+  platform:                     dev/platform/terraform.tfstate
+  tools/glean:                  dev/tools/glean/terraform.tfstate
+  agents/hr-assistant:          dev/agents/hr-assistant/terraform.tfstate
+  agents/hr-assistant-strands:  dev/agents/hr-assistant-strands/terraform.tfstate
 
 ### Remote state pattern between layers:
 
@@ -346,7 +357,8 @@ Committed as real files (not .example):
 - terraform/dev/foundation/backend.tf            — Real dev values, committed to git.
 - terraform/dev/platform/backend.tf              — Real dev values, committed to git.
 - terraform/dev/tools/glean/backend.tf           — Real dev values, committed to git.
-- terraform/dev/agents/hr-assistant/backend.tf   — Real dev values, committed to git.
+- terraform/dev/agents/hr-assistant/backend.tf          — Real dev values, committed to git.
+- terraform/dev/agents/hr-assistant-strands/backend.tf  — Real dev values, committed to git.
 - All *.tf module files                          — Always committed as real files.
 - terraform.tfvars.example                       — Committed with placeholder values
                                                    as a template for engineers.
@@ -359,7 +371,8 @@ Git-ignored, never committed:
 - terraform/dev/foundation/terraform.tfvars         — Environment-specific values.
 - terraform/dev/platform/terraform.tfvars           — Environment-specific values.
 - terraform/dev/tools/glean/terraform.tfvars        — Environment-specific values.
-- terraform/dev/agents/hr-assistant/terraform.tfvars — Environment-specific values.
+- terraform/dev/agents/hr-assistant/terraform.tfvars          — Environment-specific values.
+- terraform/dev/agents/hr-assistant-strands/terraform.tfvars  — Environment-specific values.
 - .terraform/                          — Provider cache, never committed.
 - *.tfstate and *.tfstate.backup       — State files, never committed.
 - crash.log                            — Terraform crash log, never committed.
@@ -394,12 +407,18 @@ the layer directory before running any Terraform command.
   terraform init && terraform plan -out=tfplan
   terraform apply tfplan
 
+  # Optional: apply Strands layer (requires hr-assistant applied first)
+  cd terraform/dev/agents/hr-assistant-strands
+  terraform init && terraform plan -out=tfplan
+  terraform apply tfplan
+
   # Teardown in reverse order:
   # IMPORTANT: agents and tools MUST be destroyed before platform.
   # The tools layer registers gateway targets against the platform gateway —
   # destroying platform while targets exist fails with "Gateway has targets associated".
   # Destroy agents and tools first to cleanly remove targets and agent resources.
 
+  cd terraform/dev/agents/hr-assistant-strands && terraform destroy -auto-approve
   cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
   cd terraform/dev/tools/glean && terraform destroy -auto-approve
   cd terraform/dev/platform && terraform destroy -auto-approve
@@ -425,7 +444,8 @@ running terraform init. Use these exact resource names:
   Foundation state key:          dev/foundation/terraform.tfstate
   Platform state key:            dev/platform/terraform.tfstate
   Glean tool state key:          dev/tools/glean/terraform.tfstate
-  HR Assistant agent state key:  dev/agents/hr-assistant/terraform.tfstate
+  HR Assistant agent state key:          dev/agents/hr-assistant/terraform.tfstate
+  HR Assistant Strands agent state key:  dev/agents/hr-assistant-strands/terraform.tfstate
 
 Never use local state. Never share state files across environments
 or across layers within the same environment.

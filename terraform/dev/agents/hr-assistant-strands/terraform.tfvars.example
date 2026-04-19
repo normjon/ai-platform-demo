@@ -1,0 +1,26 @@
+# terraform/dev/agents/hr-assistant-strands/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in all values before applying.
+# Never commit terraform.tfvars — it is git-ignored.
+
+# Get from: aws sts get-caller-identity --query Account --output text
+account_id = "096305373014"
+
+# Set after Component 3 container build and push.
+# Tag uses strands-<SHA> prefix to distinguish from boto3 agent images.
+# Example: "096305373014.dkr.ecr.us-east-2.amazonaws.com/ai-platform-dev-hr-assistant:strands-abc1234"
+agent_image_uri = ""
+
+# Get from agents/hr-assistant: terraform output -raw system_prompt_version_arn
+system_prompt_arn = ""
+
+# Get from agents/hr-assistant: terraform output -raw guardrail_id
+guardrail_id = ""
+
+# Get from agents/hr-assistant: terraform output -raw guardrail_version
+guardrail_version = "DRAFT"
+
+# Get from agents/hr-assistant: terraform output -raw knowledge_base_id
+knowledge_base_id = ""
+
+# Get from agents/hr-assistant: terraform output -raw prompt_vault_writer_arn
+prompt_vault_lambda_arn = ""

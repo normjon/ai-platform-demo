@@ -262,6 +262,24 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
           "bedrock-agentcore:UpdateGatewayTarget",
         ]
         Resource = "*"
+      },
+      {
+        # S3: Strands SDK S3SessionManager persists conversation history to the
+        # prompt vault bucket under the strands-sessions/ prefix.
+        # The KMSDecrypt statement above covers the matching kms:GenerateDataKey
+        # needed for SSE-KMS puts on this bucket.
+        Sid    = "S3StrandsSessionReadWrite"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket",
+        ]
+        Resource = [
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}",
+          "arn:aws:s3:::${local.prompt_vault_bucket_name}/strands-sessions/*",
+        ]
       }
     ]
   })

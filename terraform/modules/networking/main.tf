@@ -42,7 +42,7 @@ resource "aws_security_group" "agentcore" {
 }
 
 # Interface VPC endpoint ENIs are in the VPC CIDR. Egress to VPC CIDR covers all
-# interface endpoints (bedrock-runtime, ecr.api, ecr.dkr, bedrock-agent, lambda, logs).
+# interface endpoints (bedrock-runtime, ecr.api, ecr.dkr, bedrock-agent, lambda, logs, monitoring).
 resource "aws_security_group_rule" "agentcore_egress_https_vpc" {
   type              = "egress"
   from_port         = 443
@@ -186,3 +186,15 @@ resource "aws_vpc_endpoint" "ecr_dkr" {
   tags                = merge(var.tags, { Name = "${var.name_prefix}-ecr-dkr-endpoint" })
 }
 
+# monitoring: CloudWatch Metrics API (put_metric_data). Required for agent containers
+# to emit custom CloudWatch metrics from private subnets — monitoring.amazonaws.com
+# is a public endpoint with no route from private subnets without this endpoint.
+resource "aws_vpc_endpoint" "cloudwatch_monitoring" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.monitoring"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-monitoring-endpoint" })
+}

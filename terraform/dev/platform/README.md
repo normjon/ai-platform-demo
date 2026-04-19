@@ -535,6 +535,44 @@ aws dynamodb delete-item \
 
 ## Known Issues
 
+**`monitoring` VPC endpoint required for container CloudWatch metrics**
+
+Agent containers in private subnets call `cloudwatch:PutMetricData` against
+`monitoring.amazonaws.com`. Without an interface VPC endpoint for the `monitoring`
+service, this call has no route from the private subnet (no NAT gateway exists).
+The connection hangs until the boto3 socket timeout fires, the container is recycled
+before that happens, and metrics are silently dropped — **no error is logged**.
+
+The `monitoring` endpoint was added to `terraform/modules/networking/main.tf` as
+`aws_vpc_endpoint.cloudwatch_monitoring` alongside the existing `cloudwatch_logs`
+endpoint. If metrics are not appearing in the `bedrock-agentcore` namespace after
+confirmed invocations, verify the endpoint is active:
+
+```bash
+aws ec2 describe-vpc-endpoints \
+  --region us-east-2 \
+  --filters "Name=service-name,Values=com.amazonaws.us-east-2.monitoring" \
+  --query 'VpcEndpoints[*].{State:State,Id:VpcEndpointId}' \
+  --output table
+```
+
+Expected state: `available`. If missing, apply the foundation layer.
+
+**S3 write permission required for Strands `S3SessionManager`**
+
+The Strands SDK's `S3SessionManager` writes conversation history to the prompt vault
+bucket under the `strands-sessions/*` prefix. The `agentcore_runtime` IAM role must
+include an explicit `s3:PutObject` (and `GetObject`, `DeleteObject`, `ListBucket`)
+statement for this prefix. Without it, every Strands agent invocation fails with
+`AccessDenied` on the first `PutObject` call.
+
+The statement `S3StrandsSessionReadWrite` was added to `aws_iam_role_policy.agentcore_runtime`
+in this layer. It applies to all AgentCore containers — not just Strands agents.
+The boto3 agent is unaffected (it uses DynamoDB, not S3 session storage).
+
+If a new agent implementation writes session data to S3, no platform changes are needed
+as long as it uses the same bucket and a prefix under `strands-sessions/`.
+
 **AgentCore VPC-mode ENIs block subnet deletion on destroy**
 
 After destroying the AgentCore runtime, AWS releases `agentic_ai` ENIs
