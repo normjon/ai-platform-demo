@@ -30,6 +30,36 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 _REGION = os.environ.get("AWS_REGION", "us-east-2")
+_AGENT_ID = "hr-assistant-strands-dev"
+_cloudwatch = boto3.client("cloudwatch", region_name=_REGION)
+
+# ---------------------------------------------------------------------------
+# Metric emission — fire-and-forget, never fails an invocation.
+# Namespace "bedrock-agentcore" is required by the IAM condition on the
+# agentcore_runtime role (cloudwatch:namespace = "bedrock-agentcore").
+# ---------------------------------------------------------------------------
+
+def _emit_invocation_metrics(latency_ms: int, input_tokens: int, output_tokens: int) -> None:
+    environment = os.environ.get("AGENT_ENV", "dev")
+    dimensions = [
+        {"Name": "AgentId",     "Value": _AGENT_ID},
+        {"Name": "Environment", "Value": environment},
+    ]
+    try:
+        _cloudwatch.put_metric_data(
+            Namespace="bedrock-agentcore",
+            MetricData=[
+                {"MetricName": "InvocationLatency", "Dimensions": dimensions,
+                 "Value": latency_ms, "Unit": "Milliseconds"},
+                {"MetricName": "InputTokens",  "Dimensions": dimensions,
+                 "Value": input_tokens,  "Unit": "Count"},
+                {"MetricName": "OutputTokens", "Dimensions": dimensions,
+                 "Value": output_tokens, "Unit": "Count"},
+            ],
+        )
+    except Exception as exc:
+        logger.warning(json.dumps({"event": "metric_emit_failed", "error": str(exc)}))
+
 
 # ---------------------------------------------------------------------------
 # App initialisation
@@ -196,6 +226,13 @@ async def invocations(request: Request) -> Response:
         input_tokens=result["input_tokens"],
         output_tokens=result["output_tokens"],
         latency_ms=result["latency_ms"],
+    )
+
+    # Fire-and-forget CloudWatch custom metrics
+    _emit_invocation_metrics(
+        latency_ms=result["latency_ms"],
+        input_tokens=result["input_tokens"],
+        output_tokens=result["output_tokens"],
     )
 
     return JSONResponse(content={"response": result["response"]})
