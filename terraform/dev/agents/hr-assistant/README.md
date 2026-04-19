@@ -1,5 +1,10 @@
 # HR Assistant Agent Layer — `terraform/dev/agents/hr-assistant/`
 
+**boto3 implementation.** This layer owns all shared policy resources for the HR
+Assistant (system prompt, guardrail, Knowledge Base, Prompt Vault Lambda). A parallel
+**Strands SDK** implementation exists at `terraform/dev/agents/hr-assistant-strands/`
+and consumes these resources via Terraform output variables. Apply this layer first.
+
 Agent-specific configuration for the HR Assistant — the first production-grade
 agent on the Enterprise AI Platform dev environment.
 
@@ -396,6 +401,8 @@ cd terraform/dev/agents/hr-assistant
 | 7d | Prompt Vault Lambda writes to S3 | Lambda returns S3 key matching `prompt-vault/hr-assistant/YYYY/MM/DD/*.json` |
 | 7e | CloudWatch logs confirm KB retrieval | `kb_retrieve` event with correct KB ID in last 5 min of runtime log group |
 | 7f | Glean stub Lambda MCP tools/call | Glean Lambda returns search results for MCP `tools/call` request |
+
+Tests 8a–8f cover the parallel Strands agent — see `terraform/dev/agents/hr-assistant-strands/README.md`.
 
 ---
 
