@@ -4,7 +4,7 @@
 **Display Name:** Enterprise AI Platform
 **Owner:** platform-team
 **Environment:** dev
-**Version:** 1.1
+**Version:** 1.2
 **Last updated:** April 2026
 
 ---
@@ -62,6 +62,11 @@ correctly regardless of how long ago the scorer last ran.
 - `AIPlatform/AgentCore` — emitted via CloudWatch Metric Filters on the
   AgentCore runtime log group. Filters are owned by the agent and tool layers
   that define the log event schemas (not the platform layer).
+- `bedrock-agentcore` — emitted directly from agent containers via
+  `cloudwatch.put_metric_data()`. The namespace is fixed by the platform's
+  IAM condition on `cloudwatch:namespace` — any other value is denied. In
+  AMP these surface as `cloudwatch_bedrock_agentcore_<metric>_<stat>`
+  (the hyphen is normalised to an underscore).
 
 ---
 
@@ -150,6 +155,162 @@ metrics:
                  zero while AgentInvocationCount is high indicates the KB is
                  satisfying all queries without tool use — expected for HR policy
                  questions well-covered by the indexed documents.
+```
+
+### bedrock-agentcore (orchestrator)
+
+```yaml
+metrics:
+  - name: OrchestratorInvocationLatency
+    namespace: bedrock-agentcore
+    source: Orchestrator container (terraform/dev/agents/orchestrator/container/app/metrics.py)
+            via explicit put_metric_data in emit_orchestrator_metrics().
+            Measured in main.py from request receipt to response-ready (pre-return),
+            so it covers inbound PII scan, Strands agent loop, dispatch round-trip,
+            and outbound PII scan. Dimensions: AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: line
+    dashboard: orchestrator
+    description: End-to-end orchestrator invocation latency in milliseconds.
+                 Values consistently above 20 000 ms indicate a sub-agent is
+                 dominating the call — compare against DispatchLatency per
+                 DispatchedAgent to localise the bottleneck.
+
+  - name: OrchestratorInputTokens
+    namespace: bedrock-agentcore
+    source: Orchestrator container via put_metric_data. Input tokens from the
+            orchestrator's OWN Strands agent loop (model that decides whether
+            and where to dispatch) — NOT the sub-agent's tokens. Dimensions:
+            AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Input tokens consumed by the orchestrator router model per
+                 invocation. Drift upward over time is a signal that the
+                 registry prompt or system prompt has grown — the router
+                 cost scales linearly with this.
+
+  - name: OrchestratorOutputTokens
+    namespace: bedrock-agentcore
+    source: Orchestrator container via put_metric_data. Output tokens from the
+            orchestrator's own Strands agent loop. Dimensions:
+            AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Output tokens produced by the orchestrator router model.
+                 Typically small (the router emits a tool_use block, not a
+                 user-facing response); a sudden jump usually means the
+                 router is answering inline rather than dispatching.
+
+  - name: PiiDetectedInbound
+    namespace: bedrock-agentcore
+    source: Orchestrator container via put_metric_data. Count of PII entity
+            types detected by Comprehend DetectPiiEntities on the inbound
+            user prompt (pre-redaction). Dimensions: AgentId=orchestrator-dev,
+            Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Number of PII entity types detected in inbound user prompts
+                 per period. Non-zero values confirm the redaction middleware
+                 is active — sustained zero on user traffic may mean the
+                 Comprehend call is failing silently (check the `comprehend`
+                 VPC endpoint).
+
+  - name: PiiDetectedOutbound
+    namespace: bedrock-agentcore
+    source: Orchestrator container via put_metric_data. Count of PII entity
+            types detected on the assembled response before it is returned
+            to the caller. Dimensions: AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Number of PII entity types detected in outbound responses
+                 per period. A sustained non-zero value indicates a sub-agent
+                 is returning PII that the orchestrator must redact — the
+                 sub-agent's own guardrail may need tightening.
+
+  - name: DispatchLatency
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_dispatch_metrics()
+            around the bedrock-agentcore:InvokeAgentRuntime call.
+            Dimensions: AgentId=orchestrator-dev, DispatchedAgent, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: line
+    dashboard: orchestrator
+    description: Round-trip latency in milliseconds for a cross-runtime
+                 sub-agent invocation, per DispatchedAgent. Does not include
+                 orchestrator-side PII scan or router cost — subtract from
+                 OrchestratorInvocationLatency to isolate orchestrator overhead.
+
+  - name: DispatchCount
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_dispatch_metrics().
+            Emits 1 per cross-runtime dispatch call (including failures).
+            Dimensions: AgentId=orchestrator-dev, DispatchedAgent, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Total cross-runtime dispatch attempts per period, broken
+                 down by DispatchedAgent. Reflects traffic split across
+                 sub-agents — used to validate routing decisions.
+
+  - name: DispatchSuccess
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_dispatch_metrics()
+            when the InvokeAgentRuntime call completes and the response
+            body decodes cleanly. Dimensions: AgentId=orchestrator-dev,
+            DispatchedAgent, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Count of successful cross-runtime dispatches per period,
+                 per DispatchedAgent. Compare against DispatchCount to
+                 compute per-agent success rate.
+
+  - name: DispatchFailure
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_dispatch_metrics()
+            on InvokeAgentRuntime ClientError or response decode error.
+            Emitted twice on failure — once with base dimensions and once
+            with an additional ErrorClass dimension (`invoke_failed`,
+            `decode_failed`). Dimensions: AgentId=orchestrator-dev,
+            DispatchedAgent, Environment, and optionally ErrorClass.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Count of cross-runtime dispatch failures per period.
+                 Any non-zero value warrants checking the orchestrator
+                 runtime log group for `dispatch_invoke_failed` events —
+                 the most common causes are a missing `runtime_arn` in
+                 the registry or a throttled sub-agent container.
+
+  - name: RoutingFailureUnknownDomain
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_routing_counter()
+            when dispatch_agent is called with a domain the registry does
+            not advertise. Dimensions: AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Count of dispatch attempts where the LLM produced a domain
+                 not in the registry. A sustained non-zero value means the
+                 router's domain vocabulary has drifted from the registry —
+                 refresh the registry prompt injected into the system prompt.
+
+  - name: RoutingFailureAgentDisabled
+    namespace: bedrock-agentcore
+    source: Orchestrator container (dispatch.py) via emit_routing_counter()
+            when a matching registry entry exists but `enabled=false`.
+            Dimensions: AgentId=orchestrator-dev, Environment.
+            Owned by: agents/orchestrator layer.
+    visualisation: bar
+    dashboard: orchestrator
+    description: Count of dispatch attempts blocked because the target
+                 agent is disabled. Used during incident response — flipping
+                 an agent's `enabled` flag to false should produce a visible
+                 spike here within the 60-second registry cache TTL.
 ```
 
 ### AIPlatform/Quality
