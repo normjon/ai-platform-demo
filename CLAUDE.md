@@ -47,6 +47,7 @@ Layer READMEs:
 - terraform/dev/tools/glean/README.md
 - terraform/dev/agents/hr-assistant/README.md
 - terraform/dev/agents/hr-assistant-strands/README.md
+- terraform/dev/agents/orchestrator/README.md
 
 ### 3 — ADR Library
 
@@ -208,6 +209,12 @@ staging or production resources.
 - Two agent implementations for the HR Assistant — both live in parallel:
   - `agents/hr-assistant` — boto3 agentic loop (owns KB, guardrail, system prompt, Prompt Vault Lambda)
   - `agents/hr-assistant-strands` — Strands SDK loop (shares hr-assistant resources; owns its own AgentCore runtime)
+- `agents/orchestrator` — front-door supervisor agent. Routes employee requests to the
+  correct sub-agent runtime via `bedrock-agentcore:InvokeAgentRuntime`. Owns its own
+  IAM role, guardrail, ECR repo, audit log group, and runtime. Reads the DynamoDB
+  agent registry at runtime to discover sub-agents — no redeploy needed to add or
+  disable a sub-agent. Propagates `trace_id` to the sub-agent in the dispatch payload
+  for correlated logs.
 - DynamoDB tables for session memory and agent registry
 - S3 bucket for Prompt Vault (also used by Strands `S3SessionManager` under `strands-sessions/` prefix)
 - CloudWatch log groups and basic alarms; custom metrics in `bedrock-agentcore` namespace
@@ -299,6 +306,14 @@ independently without touching platform or foundation.
             outputs.tf
             terraform.tfvars
             terraform.tfvars.example
+         orchestrator/         # Front-door supervisor agent. Routes employee requests to sub-agents.
+            backend.tf         # Reads foundation + platform remote state.
+            main.tf            # Own IAM role, guardrail, ECR repo, audit log group, runtime (count-gated).
+            variables.tf
+            outputs.tf
+            container/         # FastAPI + Strands container source (arm64).
+            terraform.tfvars
+            terraform.tfvars.example
 
   modules/                # Reusable modules called by layers above
     kms/                  # KMS CMK — called by foundation
@@ -317,6 +332,7 @@ independently without touching platform or foundation.
   tools/glean:                  dev/tools/glean/terraform.tfstate
   agents/hr-assistant:          dev/agents/hr-assistant/terraform.tfstate
   agents/hr-assistant-strands:  dev/agents/hr-assistant-strands/terraform.tfstate
+  agents/orchestrator:          dev/agents/orchestrator/terraform.tfstate
 
 ### Remote state pattern between layers:
 
@@ -359,6 +375,7 @@ Committed as real files (not .example):
 - terraform/dev/tools/glean/backend.tf           — Real dev values, committed to git.
 - terraform/dev/agents/hr-assistant/backend.tf          — Real dev values, committed to git.
 - terraform/dev/agents/hr-assistant-strands/backend.tf  — Real dev values, committed to git.
+- terraform/dev/agents/orchestrator/backend.tf          — Real dev values, committed to git.
 - All *.tf module files                          — Always committed as real files.
 - terraform.tfvars.example                       — Committed with placeholder values
                                                    as a template for engineers.
@@ -373,6 +390,7 @@ Git-ignored, never committed:
 - terraform/dev/tools/glean/terraform.tfvars        — Environment-specific values.
 - terraform/dev/agents/hr-assistant/terraform.tfvars          — Environment-specific values.
 - terraform/dev/agents/hr-assistant-strands/terraform.tfvars  — Environment-specific values.
+- terraform/dev/agents/orchestrator/terraform.tfvars          — Environment-specific values.
 - .terraform/                          — Provider cache, never committed.
 - *.tfstate and *.tfstate.backup       — State files, never committed.
 - crash.log                            — Terraform crash log, never committed.
@@ -412,12 +430,20 @@ the layer directory before running any Terraform command.
   terraform init && terraform plan -out=tfplan
   terraform apply tfplan
 
+  # Optional: apply orchestrator layer (requires at least one sub-agent layer
+  # with enabled=true in the registry; typically hr-assistant-strands).
+  # Two-step apply: first with agent_image_uri = "", then with the pushed URI.
+  cd terraform/dev/agents/orchestrator
+  terraform init && terraform plan -out=tfplan
+  terraform apply tfplan
+
   # Teardown in reverse order:
   # IMPORTANT: agents and tools MUST be destroyed before platform.
   # The tools layer registers gateway targets against the platform gateway —
   # destroying platform while targets exist fails with "Gateway has targets associated".
   # Destroy agents and tools first to cleanly remove targets and agent resources.
 
+  cd terraform/dev/agents/orchestrator && terraform destroy -auto-approve
   cd terraform/dev/agents/hr-assistant-strands && terraform destroy -auto-approve
   cd terraform/dev/agents/hr-assistant && terraform destroy -auto-approve
   cd terraform/dev/tools/glean && terraform destroy -auto-approve
@@ -446,6 +472,7 @@ running terraform init. Use these exact resource names:
   Glean tool state key:          dev/tools/glean/terraform.tfstate
   HR Assistant agent state key:          dev/agents/hr-assistant/terraform.tfstate
   HR Assistant Strands agent state key:  dev/agents/hr-assistant-strands/terraform.tfstate
+  Orchestrator agent state key:          dev/agents/orchestrator/terraform.tfstate
 
 Never use local state. Never share state files across environments
 or across layers within the same environment.
@@ -546,6 +573,10 @@ or at first tool invocation — not a startup error:
 | `ecr.dkr` | Container image layer download |
 | `bedrock-agent` | KB retrieval API |
 | `bedrock-agent-runtime` | KB retrieve operation at runtime |
+| `bedrock-agentcore` | Cross-runtime `InvokeAgentRuntime` (orchestrator → sub-agent). Without it the nested invoke resolves a public IP with no route from the private subnet and hangs until AgentCore's health check times out — symptom surfaces as `RuntimeClientError: Runtime health check failed or timed out` on dispatch, while short-path invocations (no nested invoke) still succeed. |
+| `bedrock-runtime` | Bedrock `InvokeModel` from Strands containers |
+| `monitoring` | `cloudwatch:PutMetricData` for custom metrics |
+| `logs` | CloudWatch Logs writes |
 | `lambda` | Agent invokes tool Lambdas |
 | `s3` (gateway type) | S3 layer downloads during image pull |
 | `dynamodb` (gateway type) | Session memory and agent registry |
@@ -606,6 +637,86 @@ isolation. Reusing a session ID that has corrupt history (incomplete
 
 NOT `/aws/agentcore/<name>` — that path does not exist. When debugging
 502 errors or unexpected container behaviour, check this log group first.
+
+### Application logs via direct-write CloudWatch handler (REQUIRED)
+
+The AgentCore stdout/stderr capture sidecar silently drops log events on
+some runtimes. Observed on the orchestrator (2026-04) and stub-agent
+(2026-04-22) runtimes: the container writes `logger.info(...)` lines to
+stdout, uvicorn flushes them, but the runtime log group
+(`/aws/bedrock-agentcore/runtimes/<id>-DEFAULT`) receives zero app events
+and only AgentCore control-plane messages. There is no error, no warning,
+no `[runtime-logs]` stream — the events simply never arrive. Relying on
+stdout for application diagnostics is unsafe.
+
+**All new agent containers must install the direct-write CloudWatch
+handler.** The handler calls `logs:PutLogEvents` directly from the Python
+process against a dedicated **application** log group, bypassing the
+sidecar entirely.
+
+Reference implementation:
+`terraform/dev/agents/hr-assistant-strands/container/app/log_handler.py`
+
+Copy it verbatim into `container/app/log_handler.py` for any new agent
+(the env-var version, not the config-module variant) and install it at
+startup immediately after `logging.basicConfig(...)`:
+
+```python
+from app import log_handler
+log_handler.install()   # reads APP_LOG_GROUP and AWS_REGION from env
+```
+
+**Required Terraform wiring for every agent layer:**
+
+1. Create a dedicated **application** log group, separate from the
+   AgentCore-managed runtime log group. Use the naming convention
+   `/ai-platform/<agent>/app-<environment>` — this keeps app logs
+   discoverable and prevents collisions with the sidecar path.
+
+   ```hcl
+   resource "aws_cloudwatch_log_group" "<agent>_app" {
+     name              = "/ai-platform/<agent>/app-${var.environment}"
+     retention_in_days = 30
+     kms_key_id        = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+   }
+   ```
+
+2. Grant the runtime IAM role `logs:CreateLogStream` and
+   `logs:PutLogEvents` **scoped to that log group's ARN**, NOT the
+   runtime path. Direct-write is a separate permission grant from the
+   AgentCore-managed writes:
+
+   ```hcl
+   {
+     Sid    = "AppLogGroupDirectWrite"
+     Effect = "Allow"
+     Action = ["logs:CreateLogStream", "logs:PutLogEvents"]
+     Resource = ["${aws_cloudwatch_log_group.<agent>_app.arn}:*"]
+   }
+   ```
+
+3. Pass the log group name into the runtime via `environment_variables`:
+
+   ```hcl
+   environment_variables = {
+     APP_LOG_GROUP = aws_cloudwatch_log_group.<agent>_app.name
+     # ... other env vars
+   }
+   ```
+
+4. Add `boto3` to the container's `requirements.txt` (the handler calls
+   `boto3.client("logs")` directly — it is NOT transitively provided by
+   `fastapi` or `uvicorn`).
+
+**Smoke tests must assert against the app log group, not the runtime log
+group.** Any check for a specific application event (e.g. `stub_invoke`,
+`strands_invoke`) should query `APP_LOG_GROUP`. Querying the runtime log
+group for app events will flake on sidecar-drop and is a false negative.
+
+**When `APP_LOG_GROUP` is unset**, `install()` is a no-op — the agent
+continues to log via stdout. This is intentional so local development
+and debugging images without a log group still run, but any deployed
+runtime must set `APP_LOG_GROUP` or diagnostics will be invisible.
 
 ### OpenSearch Serverless (AOSS) for Knowledge Bases
 

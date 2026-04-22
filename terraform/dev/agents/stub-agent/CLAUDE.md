@@ -26,8 +26,9 @@ no Strands, no session manager — dispatch assertions stay flake-free.
 ## What This Layer Owns
 
 - `aws_ecr_repository.stub` — `ai-platform-dev-stub-agent` image repo (own, not shared)
-- `aws_iam_role.stub_runtime` + inline policy — minimal (ECR pull, CloudWatch logs/metrics, KMS decrypt, workload identity)
+- `aws_iam_role.stub_runtime` + inline policy — minimal (ECR pull, CloudWatch logs/metrics, KMS decrypt, workload identity, direct-write app log group)
 - `aws_bedrockagentcore_agent_runtime.stub` — count-gated on `agent_image_uri`
+- `aws_cloudwatch_log_group.stub_app` (`/ai-platform/stub-agent/app-dev`) — destination for the container's direct-write CloudWatch handler (see project-root CLAUDE.md "Application logs via direct-write CloudWatch handler")
 - `aws_cloudwatch_log_group.stub_runtime` — count-gated; may need import (Pitfall 5)
 - `terraform_data.stub_manifest` — registry entry for `stub-agent-dev` with `domains=["test.echo"]`
 
@@ -105,7 +106,11 @@ orchestrator redeploy required. That's the test.
 
 - **S1** — invoke with `{"prompt": "Hello from smoke test"}` and assert the
   response contains `[stub-agent] received: Hello from smoke test`.
-- **S2** — CloudWatch runtime log group contains a `stub_invoke` event.
+- **S2** — **application** log group (`/ai-platform/stub-agent/app-dev`)
+  contains a `stub_invoke` event. NOT the runtime log group — the AgentCore
+  stdout sidecar silently drops events, so the container writes direct via
+  `app/log_handler.py`. See project-root CLAUDE.md "Application logs via
+  direct-write CloudWatch handler" for the authoritative pattern.
 
 The orchestrator-side dispatch assertion (Phase O.5.b) lives in the orchestrator
 layer's `smoke-test.sh`. Keeping the two layers' smoke tests independent avoids
@@ -167,8 +172,9 @@ README.md                 Operator runbook
 CLAUDE.md                 This file
 container/
   Dockerfile              arm64 FastAPI — no Strands, no Bedrock
-  requirements.txt        fastapi + uvicorn only
+  requirements.txt        fastapi + uvicorn + boto3 (boto3 for the direct-write log handler)
   app/
     __init__.py
-    main.py               Echo handler + health + stub_invoke log
+    main.py               Echo handler + health + stub_invoke log; installs log_handler at startup
+    log_handler.py        Direct-write CloudWatch handler — bypasses sidecar (reads APP_LOG_GROUP)
 ```

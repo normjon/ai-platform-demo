@@ -30,6 +30,9 @@ COPY app/ /app/app/
 
 ENV PYTHONPATH=/app/deps
 ENV PORT=8080
+# Flush stdout immediately so short log lines land in CloudWatch without
+# waiting for Python's default 8KB block buffer to fill.
+ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8080
 

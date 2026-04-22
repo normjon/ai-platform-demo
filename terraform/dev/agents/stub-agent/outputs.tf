@@ -22,3 +22,8 @@ output "agentcore_runtime_arn" {
   description = "AgentCore runtime ARN for the stub-agent. Null until agent_image_uri is set and the runtime is created."
   value       = try(aws_bedrockagentcore_agent_runtime.stub[0].agent_runtime_arn, null)
 }
+
+output "app_log_group_name" {
+  description = "CloudWatch log group for the container's direct-write application logs."
+  value       = aws_cloudwatch_log_group.stub_app.name
+}

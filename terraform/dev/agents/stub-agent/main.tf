@@ -40,6 +40,7 @@ locals {
   name_prefix     = "${var.project_name}-${var.environment}"
   runtime_enabled = var.agent_image_uri != "" ? 1 : 0
   ecr_repository  = "${var.project_name}-${var.environment}-stub-agent"
+  app_log_group   = "/ai-platform/stub-agent/app-${var.environment}"
 }
 
 # ---------------------------------------------------------------------------
@@ -142,6 +143,17 @@ resource "aws_iam_role_policy" "stub_runtime" {
         ]
       },
       {
+        Sid    = "AppLogGroupDirectWrite"
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogStream",
+          "logs:PutLogEvents",
+        ]
+        Resource = [
+          "${aws_cloudwatch_log_group.stub_app.arn}:*",
+        ]
+      },
+      {
         Sid      = "CloudWatchMetrics"
         Effect   = "Allow"
         Action   = ["cloudwatch:PutMetricData"]
@@ -202,12 +214,29 @@ resource "aws_bedrockagentcore_agent_runtime" "stub" {
   }
 
   environment_variables = {
-    AGENT_ENV  = var.environment
-    LOG_LEVEL  = "INFO"
-    LOG_FORMAT = "json"
+    AGENT_ENV     = var.environment
+    LOG_LEVEL     = "INFO"
+    LOG_FORMAT    = "json"
+    APP_LOG_GROUP = aws_cloudwatch_log_group.stub_app.name
   }
 
   tags = local.tags
+}
+
+# ---------------------------------------------------------------------------
+# Application log group — destination for the container's direct-write
+# CloudWatch handler. AgentCore's stdout sidecar silently drops events on
+# some runtimes (observed on stub-agent and orchestrator during 2026-04
+# debugging), so the container bypasses stdout and calls PutLogEvents
+# directly against this group via app/log_handler.py.
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "stub_app" {
+  name              = local.app_log_group
+  retention_in_days = 30
+  kms_key_id        = data.terraform_remote_state.foundation.outputs.storage_kms_key_arn
+
+  tags = merge(local.tags, { Component = "stub-agent-app-logs" })
 }
 
 # ---------------------------------------------------------------------------
