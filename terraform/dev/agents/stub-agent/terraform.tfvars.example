@@ -1,0 +1,13 @@
+# terraform/dev/agents/stub-agent/terraform.tfvars.example
+# Copy to terraform.tfvars and fill in all values before applying.
+# Never commit terraform.tfvars — it is git-ignored.
+
+# Get from: aws sts get-caller-identity --query Account --output text
+account_id = "096305373014"
+
+# Set after container build and push.
+# Tag uses stub-<SHA> prefix.
+# Example: "096305373014.dkr.ecr.us-east-2.amazonaws.com/ai-platform-dev-stub-agent:stub-abc1234"
+# Leave empty during initial scaffold apply — runtime + registry entry are count-gated
+# and will not be created until this value is non-empty.
+agent_image_uri = ""

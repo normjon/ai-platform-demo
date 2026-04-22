@@ -18,6 +18,8 @@
 #   O5 — CloudWatch logs confirm supervisor_invoke event for O2 session with
 #        dispatched_agent=hr-assistant-strands-dev
 #   O6 — Audit log group captures a request record for the O2 session
+#   O7 — Echo prompt routes to stub-agent-dev (proves multi-tenant dispatch; the test
+#        that makes O2 a "routing" assertion rather than a "dispatch to only option")
 
 set -uo pipefail
 
@@ -255,6 +257,44 @@ if [ "${INVOKE_O4_EXIT}" -eq 0 ] && { [ -z "${DISPATCHED_O4}" ] || [ "${DISPATCH
   pass "Orchestrator declined off-domain prompt without dispatching"
 else
   fail "Off-domain prompt was dispatched — exit=${INVOKE_O4_EXIT} dispatched=${DISPATCHED_O4}"
+fi
+
+# ---------------------------------------------------------------------------
+# Test O7 — Echo prompt routes to stub-agent-dev (multi-tenant dispatch proof)
+# ---------------------------------------------------------------------------
+
+echo "Test O7 — Orchestrator dispatches echo prompt to stub-agent-dev"
+SESSION_O7="smoke-o7-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+RESPONSE_FILE_O7="/tmp/smoke-o7-${TEST_TS}.json"
+PAYLOAD_O7=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'Echo test: please route this to the stub echo agent for a routing check','sessionId':'${SESSION_O7}'}).encode()).decode())")
+
+aws bedrock-agentcore invoke-agent-runtime \
+  --region "${REGION}" \
+  --agent-runtime-arn "${RUNTIME_ARN}" \
+  --runtime-session-id "${SESSION_O7}" \
+  --payload "${PAYLOAD_O7}" \
+  "${RESPONSE_FILE_O7}" > /dev/null 2>&1
+INVOKE_O7_EXIT=$?
+
+O7_REPORT=$(python3 -c "
+import json
+try:
+    with open('${RESPONSE_FILE_O7}') as f:
+        d = json.load(f)
+    print(d.get('response','').replace('\n',' ') + '__DISPATCHED__' + str(d.get('dispatched_agent','')))
+except Exception:
+    print('')
+" 2>/dev/null)
+
+BODY_O7="${O7_REPORT%__DISPATCHED__*}"
+DISPATCHED_O7="${O7_REPORT##*__DISPATCHED__}"
+
+rm -f "${RESPONSE_FILE_O7}"
+
+if [ "${INVOKE_O7_EXIT}" -eq 0 ] && [ "${DISPATCHED_O7}" = "stub-agent-dev" ] && [[ "${BODY_O7}" == *"[stub-agent] received:"* ]]; then
+  pass "Orchestrator routed echo prompt to stub-agent-dev; stub echo prefix present in body"
+else
+  fail "Echo prompt did not route to stub — exit=${INVOKE_O7_EXIT} dispatched=${DISPATCHED_O7} body=${BODY_O7:0:200}"
 fi
 
 # ---------------------------------------------------------------------------
