@@ -1,0 +1,235 @@
+You are an expert enterprise AI architect specializing in the Strands Agents SDK and skills-driven agent design. Your task is to produce a concrete architecture document and implementation plan for redesigning the HR Assistant using a skills-based architecture.
+Stay strictly within this scope. Your output is a document, not a conversation.
+
+Reference Material
+Read and apply the following before writing:
+AWS Multi-Agent Orchestration Reference ~/Downloads/multi-agent-orchestration-on-aws.pdf (first 3 pages)
+Extract from this document:
+* The supervisor/sub-agent pattern and how routing works
+* How specialized agents are coordinated
+* Apply these patterns to the orchestrator design in Section 3
+Anthropic Skills Guide https://resources.anthropic.com/hubfs/The-Complete-Guide-to-Building-Skill-for-Claude.pdf
+Extract from this document:
+* The SKILL.md format, required frontmatter fields, and naming rules
+* The progressive disclosure principle (frontmatter → body → linked files)
+* The Skills + MCP pattern for tool-enhanced workflows
+* Apply these standards to all SKILL.md content in Section 1
+
+Design Principle: Inversion of Control
+This architecture is a deliberate implementation of the Inversion of Control (IoC) principle applied to AI agent design.
+The inversion:
+* Traditional agent: the agent controls its own domain behavior — when to retrieve, how to respond, when to escalate. Domain logic lives in agent code.
+* This architecture: the skill controls domain behavior. The agent is a generic executor that receives behavior through injection. Domain logic lives in SKILL.md files.
+The IoC mapping:
+IoC Concept	This Architecture
+Component	Generic agent shell (Strands Agent)
+External definition	Skill (SKILL.md)
+IoC container	skills_loader.py (reads, composes, injects)
+Dynamic IoC	Orchestrator (runtime skill assignment)
+Strategy Pattern	Same agent + different skill = different behavior
+Active constraints — every section must reflect IoC:
+* Skills sections: explicitly name what control was inverted from the agent to the skill. What did agent.py decide before that SKILL.md decides now?
+* Agent sections: explicitly name what was removed from the agent and why. The agent shell must be described as containing zero domain knowledge.
+* Orchestrator sections: explicitly describe the dynamic injection decisions the orchestrator makes at runtime — which skill goes to which agent, and why.
+* Implementation sections: describe how IoC is enforced structurally — version pinning, one domain skill per agent, no domain logic in agent code.
+The architectural claim this document must support:
+"Domain behavior is fully controlled by skills. The agent shell contains zero domain knowledge. Adding a new domain capability requires no agent code changes — only a new skill."
+Section 7 validates this claim explicitly. Every prior section must build toward making it true.
+
+The Architectural Model
+Three layers. Each layer has a single, clear responsibility.
+Layer 1 — Skills (Intelligence)
+Skills provide the specialized knowledge and procedural intelligence required to complete a specific task. A skill is a SKILL.md file that teaches an agent:
+* What domain knowledge applies to this task
+* When and how to use available tools
+* What good output looks like
+* What constraints must never be violated
+Skills are authored by domain experts. Skills are the unit of domain intelligence. Skills do not execute — they instruct.
+Layer 2 — Agents (Execution)
+Agents execute tasks. An agent is a generic Strands execution tier that:
+* Loads one domain skill injected at startup
+* Runs the Strands agentic loop (reason → tool call → respond)
+* Has access only to the tools its skill declares
+Agents have no domain knowledge of their own. All domain intelligence comes from the injected skill. The same generic agent shell becomes an HR agent, a Finance agent, or a Legal agent depending solely on which skill is loaded. One domain skill per agent — enforced.
+Layer 3 — Orchestrator (Routing)
+The orchestrator is the universal entry point for every request — simple or complex. A single-skill request still flows through the orchestrator. The orchestrator is never optional.
+It:
+* Receives every user request
+* Determines which agent tier is needed (conversational, workflow, etc.)
+* Determines which skill to inject into that agent
+* Dispatches to one or multiple sub-agents (serially or in parallel)
+* Assembles the final response from sub-agent results
+* Enforces all global rules: auth, audit logging, rate limiting, PII detection
+The orchestrator itself is driven by a platform skill — a routing and coordination skill owned by the platform team. The orchestrator has no domain knowledge of its own.
+
+
+User Request
+      ↓
+Orchestrator (platform/orchestrator skill — always)
+      ↓ determines: which agent tier + which domain skill
+Sub-Agent (one domain skill injected at startup)
+      ↓ executes: Strands loop + declared tools
+Orchestrator assembles final response
+      ↓
+User Response
+
+The Current HR Assistant
+The existing HR Assistant is a boto3-based implementation with three behaviors hardcoded in agent.py:
+1. KB Retrieval — calls bedrock-agent-runtime.retrieve() to search the HR knowledge base before answering any policy question
+2. Grounded Q&A — answers HR policy questions citing retrieved documents
+3. Escalation — routes to a human HR representative when the question is outside the agent's scope or requires human judgment
+These three behaviors are currently encoded in ~130 lines of manual loop logic. The goal is to extract them into skills so the agent loop becomes generic and the domain intelligence lives in versioned SKILL.md files.
+The IoC framing of this migration:
+* Behavior 1 (retrieval) — control moves from agent.py to hr/policy-lookup skill
+* Behavior 2 (grounded Q&A) — control moves from agent.py to hr/policy-lookup skill
+* Behavior 3 (escalation) — control moves from agent.py to hr/escalation-procedure skill
+
+Your Task
+Produce a complete architecture document covering the following sections. Be concrete and specific throughout. This document must be actionable — a developer should be able to read it and implement without ambiguity.
+
+Section 1 — Skills Design
+Define the skills required for the HR Assistant. For each skill provide:
+* Name and IoC purpose — what control is being inverted from agent code to this skill? Be explicit.
+* Full SKILL.md frontmatter — name, description (with trigger phrases), version, owner, tools-required, guardrail, roles-required, sensitivity. Follow the Anthropic Skills Guide format exactly.
+* Full instruction content — purpose, step-by-step instructions, output format, 2 concrete examples, hard constraints, error handling. Write content a developer could use as-is. No placeholders.
+* Tool governance — how the skill instructs the agent to use its tools: when to call, how to formulate queries, fallback behavior, no-results handling.
+Expected skills:
+platform/agent-behavior@v1.0.0 Cross-agent behavioral standards — citation format, confidence language, when to say "I don't know", escalation language and tone. Owned by the platform team. Loaded by every agent regardless of domain.
+hr/policy-lookup@v1.0.0 RAG-driven Q&A skill. This skill takes control of both retrieval behaviors from agent.py — when to retrieve and how to answer from retrieved content. Must explicitly govern:
+* Always retrieve before answering (never from general knowledge)
+* search_hr_documents first, glean_search as fallback
+* Citation format: "According to [source]: ..."
+* Follow-up question handling within the same session
+* No-results behavior
+hr/escalation-procedure@v1.0.0 Escalation skill. Takes control of the escalation behavior from agent.py. Must explicitly govern:
+* Trigger conditions (what types of questions require escalation)
+* Information to collect before escalating
+* Tone and language for escalation scenarios
+* How to hand off to a human HR representative
+Add additional skills if the analysis of agent.py reveals behaviors not covered by these three.
+
+Section 2 — Agent Design
+Define the generic agent shell for the HR Assistant. Cover:
+* IoC statement — explicitly state what domain knowledge was removed from the agent and where it moved to
+* Why conversational tier — justify the tier choice for HR use cases
+* AgentConfig structure — show the full Python dataclass with:
+    * skill_ids with @version pins
+    * gateway_tool_ids (no local_tool_ids — all tools are Gateway-registered)
+    * guardrail_id and guardrail_version
+    * session_table for DynamoDB session management
+    * gateway_endpoint
+    * Factory function pattern (get_hr_assistant_config()) — not module-level env reads
+* skills_loader behavior — how compose() assembles the system prompt at container startup from versioned S3 objects
+* S3 key convention — skills/{skill_path}/{version}/SKILL.md
+* Version pinning — why @version is mandatory, what happens if omitted (ValueError at startup), and how this enforces container image determinism
+* Agent instantiation — show the Strands Agent construction with composed system prompt and resolved Gateway tools
+* Strands agentic loop — describe how the loop executes with the injected skills driving reasoning and tool selection
+
+Section 3 — Orchestrator Design
+Define the universal orchestrator. Cover:
+* Universal entry point — state explicitly that the orchestrator handles all requests including simple single-skill requests. It is never bypassed.
+* IoC statement — the orchestrator's dynamic skill assignment is itself an IoC pattern. Describe what routing decision was removed from the caller and given to the orchestrator.
+* platform/orchestrator skill — show the full SKILL.md for the orchestrator's routing skill. Include how it:
+    * Identifies HR-domain requests
+    * Determines policy-lookup vs escalation vs both
+    * Decides serial vs parallel dispatch
+* HR request routing — trace a concrete HR request through the orchestrator showing the routing decision and skill assignment
+* Dispatch patterns for HR — are any HR skills dispatched in parallel? Justify the answer with a concrete example.
+* Response assembly — how the orchestrator synthesizes sub-agent results into a coherent final response
+* Global rules enforcement — for each global rule, show where in the orchestrator it is enforced (inbound vs outbound):
+    * Authentication and role resolution
+    * Platform baseline guardrail
+    * PII detection and redaction
+    * Audit logging (every request and response)
+    * Rate limiting
+    * Session management
+Apply the AWS supervisor/sub-agent pattern from the reference PDF here. Map the AWS pattern terminology to this architecture's terminology.
+
+Section 4 — Tool Architecture
+Define the tools the HR skills require. Cover:
+* Gateway-first principle — state why both tools are Gateway-registered rather than direct boto3 calls. What does this invert? (Infrastructure details move from agent config to Lambda env vars.)
+* search_hr_documents:
+    * Lambda responsibility and implementation
+    * Wraps bedrock-agent-runtime.retrieve() with KB_ID from Lambda env var
+    * Input event shape: {"query": "...", "top_k": 5}
+    * Output shape: {"results": [{"text": "...", "source": "...", "score": 0.0}]}
+    * Error handling: {"error": "...", "results": []}
+    * Why Bedrock KB (not direct AOSS): handles embedding internally, no index schema dependency
+* glean_search:
+    * Lambda responsibility — wraps existing Glean stub for dev environment
+    * Correct MCP JSON-RPC envelope payload (copy from existing _call_glean())
+    * Result normalization from MCP envelope to standard shape
+    * Phase 3 upgrade path to real Glean API
+    * Output shape: same standard shape as search_hr_documents
+* Standard result contract — both tools must return identical JSON shape. Show why this matters for skill portability (hr/policy-lookup works with both tools without branching).
+* AgentCore Gateway registration — document the Terraform resources required (do not implement — document only)
+
+Section 5 — Implementation Plan
+A phased, ordered plan. For each phase provide:
+* What is built
+* Acceptance criteria (specific, testable)
+* Dependencies (what must complete before this phase begins)
+Phase 1 — Skills Layer Build: SKILL.md files, versioned S3 structure, skills_loader.py, skills_loader unit tests Acceptance criteria:
+* All three SKILL.md files exist at correct S3 paths
+* parse_skill_ref("hr/policy-lookup") raises ValueError
+* parse_skill_ref("hr/policy-lookup@v1.0.0") returns ("hr/policy-lookup", "v1.0.0")
+* compose() unit tests pass with mocked S3
+* S3 fetch is cached — boto3 called once per skill+version per process
+Phase 2 — Tool Layer Build: opensearch_handler.py, glean_handler.py, Gateway registration docs Acceptance criteria:
+* Both Lambdas return identical JSON shape for valid queries
+* Both Lambdas return {"error": "...", "results": []} on failure
+* No hardcoded KB IDs, endpoints, or ARNs in Lambda code
+* Terraform documentation complete for both Gateway targets
+Phase 3 — Agent Layer Build: ai_platform/shared/base_agent.py, AgentConfig, tool_registry.py, hr-assistant skills_config.py, agent_strands.py Acceptance criteria:
+* Agent starts with AGENT_IMPL=strands and all env vars set
+* System prompt contains content from all three SKILL.md files
+* Gateway tool filtering returns only declared gateway_tool_ids
+* agent_strands.py contains zero @tool definitions and zero domain logic
+* tool_registry.TOOL_REGISTRY == {} (empty — all tools are Gateway)
+Phase 4 — Orchestrator Layer Build: platform/orchestrator skill, orchestrator agent, routing logic, global rules enforcement Acceptance criteria:
+* Every request (including single-skill) routes through orchestrator
+* Orchestrator correctly identifies HR requests and assigns hr/policy-lookup
+* Orchestrator correctly identifies escalation triggers and assigns hr/escalation-procedure
+* Auth, PII detection, and audit logging fire on every request
+* A request with invalid auth is rejected before reaching any sub-agent
+* Orchestrator response is identical in shape to direct sub-agent response
+Phase 5 — Integration and Validation Build: end-to-end smoke tests, A/B comparison harness Acceptance criteria:
+* All 6/6 existing boto3 smoke tests pass against Strands + skills implementation
+* Response quality comparison between boto3 and Strands implementations documented for each test case
+* No regression in LLM-as-Judge faithfulness or relevance scores
+* OTEL metrics flowing from Strands agent to AMP/AMG dashboards
+* Cutover criteria checklist complete (see Section 6)
+
+Section 6 — Migration from Current Implementation
+Cover:
+* Behavior mapping — for each of the three hardcoded behaviors in agent.py, show exactly which lines of code map to which new skill
+* AGENT_IMPL switching — show the main.py routing logic (AGENT_IMPL=strands → agent_strands, default → agent.py)
+* Parallel operation — how both implementations run in the same container simultaneously during the transition period
+* Smoke test parity — the 6/6 test cases, what each tests, and how to run them against both implementations
+* Cutover criteria — the complete checklist that must be satisfied before boto3 is retired:
+    * All 6/6 smoke tests pass on Strands + skills
+    * No regression in LLM-as-Judge scores (faithfulness, relevance)
+    * OTEL runtime metrics visible in AMG dashboards
+    * At least 48 hours of parallel operation with no errors
+    * Orchestrator routes all requests correctly in staging
+    * ADRs written and reviewed
+
+Section 7 — IoC Validation
+This section validates the architectural claim made in the design principle.
+For each statement below, provide evidence from the document that it is true:
+1. "The agent shell contains zero domain knowledge." Show the agent_strands.py structure and confirm: no hardcoded prompts, no domain-specific logic, no tool definitions, no retrieval calls.
+2. "Domain behavior is fully controlled by skills." For each of the three original agent.py behaviors, confirm which skill now owns that behavior and how.
+3. "Adding a new domain capability requires no agent code changes." Walk through the hypothetical: adding a Finance Assistant. Show that the steps are: write skill, register tools, create config. Confirm that base_agent.py, agent_strands.py, and main.py are untouched.
+4. "The orchestrator makes runtime injection decisions." Show a concrete request trace where the orchestrator assigns different skills to different sub-agents based on request content.
+If any statement cannot be fully supported, identify the gap and propose the remediation.
+
+Document Requirements
+* IoC lens throughout — every section names the inversion explicitly. Do not just describe what something does — describe what control moved where and why.
+* Concrete throughout — no vague statements. Every claim has a specific implementation detail behind it.
+* Full SKILL.md content — not outlines. Actual content a developer could use as-is or refine minimally.
+* Working code snippets — AgentConfig, skills_loader usage, Strands Agent instantiation, main.py routing. Snippets must be syntactically correct and consistent with each other.
+* Dependency diagram — showing how skills, agents, tools, and the orchestrator relate. ASCII or described precisely enough to draw.
+* Apply reference material — the AWS PDF informs Section 3. The Anthropic guide informs Section 1. Both must be visibly applied, not just acknowledged.
+* Length — as long as necessary to be actionable. Do not summarize where specificity is needed.
+* Section 7 is not optional — the IoC validation must be the final section and must explicitly test the architectural claim.
+
