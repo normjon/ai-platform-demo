@@ -17,7 +17,7 @@ import os
 
 import boto3
 from fastapi import BackgroundTasks, FastAPI, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 # ---------------------------------------------------------------------------
 # Logging setup — structured JSON to stdout (ADR-003)
@@ -27,6 +27,10 @@ logging.basicConfig(
     level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")),
     format="%(message)s",
 )
+
+from app import log_handler
+log_handler.install()
+
 logger = logging.getLogger(__name__)
 
 _REGION = os.environ.get("AWS_REGION", "us-east-2")
@@ -202,8 +206,27 @@ async def invocations(request: Request, background_tasks: BackgroundTasks) -> Re
         or body.get("sessionId", "default-session")
     )
 
+    # Trace context propagated from the orchestrator's dispatch payload.
+    # Absent on direct invocations — invoke() handles None.
+    trace_context = body.get("trace_context") if isinstance(body.get("trace_context"), dict) else None
+
+    # Streaming requested via body flag. Emits SSE (text/event-stream) where
+    # each event is `data: <json>\n\n` — this is the only Content-Type that
+    # AgentCore's data plane forwards progressively to the caller; any other
+    # type (application/x-ndjson included) gets buffered server-side before
+    # the gateway flushes anything to boto3.
+    if bool(body.get("stream", False)):
+        return StreamingResponse(
+            _sse_stream(session_id, user_message, trace_context),
+            media_type="text/event-stream",
+        )
+
     try:
-        result = agent_strands.invoke(session_id=session_id, user_message=user_message)
+        result = agent_strands.invoke(
+            session_id=session_id,
+            user_message=user_message,
+            trace_context=trace_context,
+        )
     except Exception as exc:
         logger.error(json.dumps({
             "event": "invocation_error",
@@ -239,3 +262,82 @@ async def invocations(request: Request, background_tasks: BackgroundTasks) -> Re
     )
 
     return JSONResponse(content={"response": result["response"]})
+
+
+# ---------------------------------------------------------------------------
+# SSE streaming generator
+#
+# Yields Server-Sent Events frames — `data: <json>\n\n`. AgentCore's data
+# plane only forwards chunks progressively when the container advertises
+# Content-Type: text/event-stream; anything else (NDJSON included) is held
+# server-side until EOF.
+#
+# After the Strands stream completes, emits a terminal "done" event with
+# usage + latency, then fires vault write and CloudWatch metrics inline.
+# StreamingResponse has no BackgroundTasks slot, so the final emit runs
+# after the stream closes but before the generator returns — the caller has
+# already received every chunk by then.
+# ---------------------------------------------------------------------------
+
+async def _sse_stream(session_id: str, user_message: str, trace_context: dict[str, str] | None):
+    import time as _t
+    from app import agent_strands, vault
+
+    accumulated_text = []
+    metadata: dict = {}
+    t0 = _t.monotonic()
+    first_yield_logged = False
+
+    try:
+        async for event in agent_strands.invoke_stream(
+            session_id=session_id,
+            user_message=user_message,
+            trace_context=trace_context,
+        ):
+            if event.get("type") == "text":
+                accumulated_text.append(event.get("data", ""))
+            elif event.get("type") == "done":
+                metadata = event.get("metadata", {})
+            if not first_yield_logged:
+                logger.info(json.dumps({
+                    "event": "sse_first_yield",
+                    "session_id": session_id,
+                    "dt_ms": int((_t.monotonic() - t0) * 1000),
+                    "type": event.get("type"),
+                }))
+                first_yield_logged = True
+            yield f"data: {json.dumps(event)}\n\n".encode()
+    except Exception as exc:
+        logger.error(json.dumps({
+            "event": "stream_invocation_error",
+            "session_id": session_id,
+            "error": str(exc),
+        }))
+        yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n".encode()
+        return
+
+    full_response = "".join(accumulated_text)
+
+    vault.write(
+        session_id=session_id,
+        user_input=user_message,
+        agent_output=full_response,
+        tool_calls=[],
+        guardrail_result={
+            "action": "GUARDRAIL_INTERVENED"
+                      if metadata.get("stop_reason") == "guardrail_intervened"
+                      else "NONE",
+            "topic_policy_result": "",
+            "content_filter_result": "",
+        },
+        model_arn=agent_strands._MODEL_ID,
+        input_tokens=metadata.get("input_tokens", 0),
+        output_tokens=metadata.get("output_tokens", 0),
+        latency_ms=metadata.get("latency_ms", 0),
+    )
+
+    _emit_invocation_metrics(
+        latency_ms=metadata.get("latency_ms", 0),
+        input_tokens=metadata.get("input_tokens", 0),
+        output_tokens=metadata.get("output_tokens", 0),
+    )

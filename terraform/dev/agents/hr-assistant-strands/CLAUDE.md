@@ -197,6 +197,44 @@ use this exact namespace or the call will be denied.
 
 ---
 
+## Streaming — SSE and AgentCore Data-Plane Aggregation
+
+`/invocations` returns `text/event-stream` (SSE) when the payload contains
+`"stream": true`. Each frame is `data: <json>\n\n`. NDJSON (`application/x-ndjson`)
+is held server-side by the AgentCore data plane until EOF and was replaced with
+SSE for this reason.
+
+**What the data-plane proxy does to your stream:** Even with SSE correctly
+advertised end-to-end (`content-type: text/event-stream; charset=utf-8`,
+`transfer-encoding: chunked`), the AWS-managed AgentCore Runtime proxy that
+sits between the container and the boto3 caller **aggregates SSE frames into
+2–3 large chunks** — it does not forward per-frame.
+
+Measured on 2026-04-22 with the Strands container flushing progressively:
+
+| Layer | First text chunk at |
+| --- | --- |
+| `agent.stream_async()` inside container | t ≈ 4.0 s |
+| `_sse_stream` yield to uvicorn | t ≈ 4.0 s |
+| boto3 `stream.read()` on caller | **t ≈ 11.6 s** |
+
+The 7-second gap is entirely inside the AWS-managed layer. Nothing in our
+container code, uvicorn config, or SSE framing changes this. AWS Labs samples
+behave the same way.
+
+**Implication:** SSE is still worth keeping — it shaves ~9 s off TTFB vs a
+non-streaming JSON response on orchestrator passthrough — but **do not market
+this as a token-by-token stream**. Consumers should expect 2–3 large bursts,
+not a typewriter UX. If token-by-token is ever a hard requirement, AgentCore
+Runtime is not the right transport.
+
+**Do not re-investigate this.** The timing-log events
+(`strands_stream_first_event`, `strands_stream_first_text`, `sse_first_yield`)
+remain in the container expressly so anyone investigating TTFB can localize
+the buffering to the proxy in one log query and stop there.
+
+---
+
 ## Structured Log Events
 
 Every log line is JSON. Useful events for debugging:

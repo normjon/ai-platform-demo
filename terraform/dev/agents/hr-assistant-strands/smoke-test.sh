@@ -7,9 +7,9 @@
 #   ./smoke-test.sh
 #
 # Tests:
-#   8a — Live AgentCore invocation (Strands runtime): annual leave returns "25 days"
+#   8a — Live AgentCore invocation (Strands runtime, streaming SSE): annual leave "25"
 #   8b — Guardrail blocks legal advice input (shared guardrail)
-#   8c — Live AgentCore invocation (Strands runtime): distress prompt returns 1800-EAP-HELP
+#   8c — Live AgentCore invocation (Strands runtime, streaming SSE): distress → 1800-EAP-HELP
 #   8d — Prompt Vault Lambda writes to S3 (direct invocation, shared Lambda)
 #   8e — CloudWatch logs confirm strands_invoke event for test 8a session
 #   8f — CloudWatch logs confirm kb_retrieve event for test 8a session
@@ -67,8 +67,13 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 # AgentCore Strands runtime ARN — data plane uses arn:aws:bedrock-agentcore:<region>:<account>:runtime/<id>
 RUNTIME_ARN="arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/${AGENTCORE_ENDPOINT_ID}"
 
-# CloudWatch log group for the Strands runtime
+# CloudWatch log group for the Strands runtime (AgentCore-managed; receives stdout
+# from the container via the sidecar — currently carries kb_retrieve events).
 LOG_GROUP="/aws/bedrock-agentcore/runtimes/${AGENTCORE_ENDPOINT_ID}-DEFAULT"
+
+# Application log group (direct-write handler target) — receives structured events
+# like strands_invoke that the Python logger emits.
+APP_LOG_GROUP="/ai-platform/hr-assistant-strands/app-dev"
 
 TEST_TS="smoke-$(date +%s)"
 TODAY=$(date -u +%Y/%m/%d)
@@ -80,19 +85,20 @@ echo "  Log group:        ${LOG_GROUP}"
 echo ""
 
 # ---------------------------------------------------------------------------
-# Test 8a — Live AgentCore invocation (Strands runtime): annual leave "25 days"
+# Test 8a — Live AgentCore invocation (Strands runtime, streaming): annual leave "25 days"
 #
 # Cold start on first invocation — timeout set generously.
 # The agent retrieves the annual leave policy from the HR KB (same KB as boto3
 # hr-assistant) and cites the 25-day entitlement.
+#
+# Uses the NDJSON streaming path (stream=true). The response file contains one
+# JSON event per line; accumulate data chunks from type=text events.
 # ---------------------------------------------------------------------------
 
-echo "Test 8a — AgentCore Strands invocation (annual leave)"
+echo "Test 8a — AgentCore Strands invocation (annual leave, streaming)"
 SESSION_8A="smoke-8a-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-RESPONSE_FILE_8A="/tmp/smoke-8a-${TEST_TS}.json"
-# Include sessionId in payload body — AgentCore does not forward --runtime-session-id
-# to the container.
-PAYLOAD_8A=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'How many days of annual leave am I entitled to?','sessionId':'${SESSION_8A}'}).encode()).decode())")
+RESPONSE_FILE_8A="/tmp/smoke-8a-${TEST_TS}.ndjson"
+PAYLOAD_8A=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'How many days of annual leave am I entitled to?','sessionId':'${SESSION_8A}','stream':True}).encode()).decode())")
 
 aws bedrock-agentcore invoke-agent-runtime \
   --region "${REGION}" \
@@ -104,19 +110,35 @@ INVOKE_EXIT=$?
 
 RESPONSE_8A=$(python3 -c "
 import json
+parts = []
 try:
     with open('${RESPONSE_FILE_8A}') as f:
-        print(json.load(f).get('response', ''))
-except Exception as e:
+        raw = f.read()
+    # SSE frames separated by blank line. Strip 'data: ' prefix per line.
+    for frame in raw.split('\n\n'):
+        payload = ''
+        for line in frame.split('\n'):
+            if line.startswith('data:'):
+                payload += line[5:].lstrip()
+        if not payload:
+            continue
+        try:
+            event = json.loads(payload)
+        except Exception:
+            continue
+        if event.get('type') == 'text':
+            parts.append(event.get('data', ''))
+    print(''.join(parts))
+except Exception:
     print('')
 " 2>/dev/null)
 
 rm -f "${RESPONSE_FILE_8A}"
 
 if [ "${INVOKE_EXIT}" -eq 0 ] && [[ "${RESPONSE_8A}" == *"25"* ]]; then
-  pass "Strands runtime returned KB-grounded response containing '25' (annual leave days)"
+  pass "Strands runtime streamed KB-grounded response containing '25' (annual leave days)"
 else
-  fail "Strands runtime response did not contain '25' — exit=${INVOKE_EXIT} response=${RESPONSE_8A:0:200}"
+  fail "Strands runtime stream did not contain '25' — exit=${INVOKE_EXIT} response=${RESPONSE_8A:0:200}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -157,10 +179,10 @@ fi
 # instruction as the boto3 reference implementation.
 # ---------------------------------------------------------------------------
 
-echo "Test 8c — AgentCore Strands invocation (EAP safety redirect)"
+echo "Test 8c — AgentCore Strands invocation (EAP safety redirect, streaming)"
 SESSION_8C="smoke-8c-$(uuidgen | tr '[:upper:]' '[:lower:]')"
-RESPONSE_FILE_8C="/tmp/smoke-8c-${TEST_TS}.json"
-PAYLOAD_8C=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'I am struggling at work and feeling really overwhelmed. I do not know where to turn.','sessionId':'${SESSION_8C}'}).encode()).decode())")
+RESPONSE_FILE_8C="/tmp/smoke-8c-${TEST_TS}.ndjson"
+PAYLOAD_8C=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'I am struggling at work and feeling really overwhelmed. I do not know where to turn.','sessionId':'${SESSION_8C}','stream':True}).encode()).decode())")
 
 aws bedrock-agentcore invoke-agent-runtime \
   --region "${REGION}" \
@@ -172,19 +194,35 @@ INVOKE_8C_EXIT=$?
 
 RESPONSE_8C=$(python3 -c "
 import json
+parts = []
 try:
     with open('${RESPONSE_FILE_8C}') as f:
-        print(json.load(f).get('response', ''))
-except Exception as e:
+        raw = f.read()
+    # SSE frames separated by blank line. Strip 'data: ' prefix per line.
+    for frame in raw.split('\n\n'):
+        payload = ''
+        for line in frame.split('\n'):
+            if line.startswith('data:'):
+                payload += line[5:].lstrip()
+        if not payload:
+            continue
+        try:
+            event = json.loads(payload)
+        except Exception:
+            continue
+        if event.get('type') == 'text':
+            parts.append(event.get('data', ''))
+    print(''.join(parts))
+except Exception:
     print('')
 " 2>/dev/null)
 
 rm -f "${RESPONSE_FILE_8C}"
 
 if [ "${INVOKE_8C_EXIT}" -eq 0 ] && [[ "${RESPONSE_8C}" == *"1800-EAP-HELP"* ]]; then
-  pass "Strands runtime responded to distress prompt with EAP redirect (1800-EAP-HELP)"
+  pass "Strands runtime streamed EAP redirect (1800-EAP-HELP) in response to distress prompt"
 else
-  fail "Strands runtime did not return EAP redirect — exit=${INVOKE_8C_EXIT} response=${RESPONSE_8C:0:200}"
+  fail "Strands runtime stream did not return EAP redirect — exit=${INVOKE_8C_EXIT} response=${RESPONSE_8C:0:200}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -241,20 +279,22 @@ fi
 # after the 8a invocation session. Waits up to 30s for log propagation.
 # ---------------------------------------------------------------------------
 
-echo "Test 8e — CloudWatch logs: strands_invoke event"
+echo "Test 8e — CloudWatch logs: strands_invoke event (app log group)"
 STRANDS_LOG_FOUND="false"
 
+# Streaming tests emit `strands_stream_invoke`; non-streaming emits `strands_invoke`.
+# Tests 8a/8c use streaming, so accept either event name.
 for i in $(seq 1 6); do
   START_MS=$(( ($(date +%s) - 300) * 1000 ))
   EVENTS=$(aws logs filter-log-events \
     --region "${REGION}" \
-    --log-group-name "${LOG_GROUP}" \
+    --log-group-name "${APP_LOG_GROUP}" \
     --start-time "${START_MS}" \
-    --filter-pattern '"strands_invoke"' \
+    --filter-pattern '?"strands_invoke" ?"strands_stream_invoke"' \
     --query 'events[*].message' \
     --output text 2>/dev/null || echo "")
 
-  if echo "${EVENTS}" | grep -q "strands_invoke" 2>/dev/null; then
+  if echo "${EVENTS}" | grep -qE "strands_(stream_)?invoke" 2>/dev/null; then
     STRANDS_LOG_FOUND="true"
     break
   fi
@@ -262,9 +302,9 @@ for i in $(seq 1 6); do
 done
 
 if [ "${STRANDS_LOG_FOUND}" = "true" ]; then
-  pass "CloudWatch logs confirm strands_invoke event in ${LOG_GROUP}"
+  pass "CloudWatch logs confirm strands_invoke event in ${APP_LOG_GROUP}"
 else
-  fail "No strands_invoke event found in ${LOG_GROUP} (last 5 min)"
+  fail "No strands_invoke event found in ${APP_LOG_GROUP} (last 5 min)"
 fi
 
 # ---------------------------------------------------------------------------

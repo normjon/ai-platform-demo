@@ -72,6 +72,7 @@ resource "aws_bedrockagentcore_agent_runtime" "strands" {
     SESSION_MEMORY_TABLE = data.terraform_remote_state.platform.outputs.session_memory_table
     AGENT_REGISTRY_TABLE = data.terraform_remote_state.platform.outputs.agent_registry_table
     PROMPT_VAULT_BUCKET  = data.terraform_remote_state.platform.outputs.prompt_vault_bucket
+    APP_LOG_GROUP        = aws_cloudwatch_log_group.strands_app.name
     LOG_LEVEL            = "INFO"
     LOG_FORMAT           = "json"
   }
@@ -95,6 +96,12 @@ resource "terraform_data" "hr_strands_manifest" {
     var.knowledge_base_id,
     var.prompt_vault_lambda_arn,
     var.model_arn,
+    aws_bedrockagentcore_agent_runtime.strands.agent_runtime_arn,
+    # Orchestrator discovery fields.
+    "hr.policy,hr.escalation",
+    "conversational",
+    "true",
+    "hr-platform",
   ]
 
   provisioner "local-exec" {
@@ -115,6 +122,7 @@ resource "terraform_data" "hr_strands_manifest" {
           "knowledge_base_id":           {"S": "${var.knowledge_base_id}"},
           "prompt_vault_lambda_arn":     {"S": "${var.prompt_vault_lambda_arn}"},
           "endpoint_id":                 {"S": "${aws_bedrockagentcore_agent_runtime.strands.agent_runtime_id}"},
+          "runtime_arn":                 {"S": "${aws_bedrockagentcore_agent_runtime.strands.agent_runtime_arn}"},
           "gateway_id":                  {"S": "${data.terraform_remote_state.platform.outputs.agentcore_gateway_id}"},
           "allowed_tools":               {"SS": ["glean-search"]},
           "data_classification_ceiling": {"S": "INTERNAL"},
@@ -123,6 +131,10 @@ resource "terraform_data" "hr_strands_manifest" {
           "response_latency_p95_ms":     {"N": "5000"},
           "monthly_usd_limit":           {"N": "50"},
           "alert_threshold_pct":         {"N": "80"},
+          "domains":                     {"SS": ["hr.policy", "hr.escalation"]},
+          "tier":                        {"S": "conversational"},
+          "enabled":                     {"BOOL": true},
+          "owner_team":                  {"S": "hr-platform"},
           "environment":                 {"S": "${var.environment}"},
           "registered_at":               {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
         }'
@@ -152,4 +164,17 @@ resource "aws_cloudwatch_log_group" "strands_runtime" {
   kms_key_id        = data.terraform_remote_state.platform.outputs.kms_key_arn
 
   tags = merge(local.tags, { Component = "runtime-logs" })
+}
+
+# ---------------------------------------------------------------------------
+# Direct-write app log group — bypasses the AgentCore stdout-capture sidecar.
+# Platform IAM policy covers this via the /ai-platform/*/app-dev wildcard.
+# ---------------------------------------------------------------------------
+
+resource "aws_cloudwatch_log_group" "strands_app" {
+  name              = "/ai-platform/hr-assistant-strands/app-${var.environment}"
+  retention_in_days = 30
+  kms_key_id        = data.terraform_remote_state.platform.outputs.kms_key_arn
+
+  tags = merge(local.tags, { Component = "strands-app" })
 }

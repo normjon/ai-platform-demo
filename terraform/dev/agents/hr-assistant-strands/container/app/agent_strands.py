@@ -176,7 +176,11 @@ def init(config: dict[str, Any], system_prompt: str) -> None:
 # Invocation
 # ---------------------------------------------------------------------------
 
-def invoke(session_id: str, user_message: str) -> dict[str, Any]:
+def invoke(
+    session_id: str,
+    user_message: str,
+    trace_context: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """
     Run the Strands agent loop for a single user turn.
 
@@ -213,7 +217,7 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
     invocations = result.metrics.agent_invocations
     usage = invocations[-1].usage if invocations else {}
 
-    logger.info(json.dumps({
+    log_event = {
         "event": "strands_invoke",
         "session_id": session_id,
         "stop_reason": result.stop_reason,
@@ -222,7 +226,11 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
         "output_tokens": usage.get("outputTokens", 0),
         "latency_ms": latency_ms,
         "tool_calls": len(result.metrics.tool_metrics),
-    }))
+    }
+    if trace_context:
+        log_event["trace_id"] = trace_context.get("trace_id", "")
+        log_event["parent_span_id"] = trace_context.get("span_id", "")
+    logger.info(json.dumps(log_event))
 
     return {
         "response": str(result),
@@ -238,4 +246,108 @@ def invoke(session_id: str, user_message: str) -> dict[str, Any]:
         "input_tokens": usage.get("inputTokens", 0),
         "output_tokens": usage.get("outputTokens", 0),
         "latency_ms": latency_ms,
+    }
+
+
+async def invoke_stream(
+    session_id: str,
+    user_message: str,
+    trace_context: dict[str, str] | None = None,
+):
+    """Streaming counterpart to invoke().
+
+    Yields NDJSON-ready dicts as they are produced by the agent:
+      {"type": "text", "data": "..."}       — text chunk
+      {"type": "tool_use", "name": "..."}   — tool invocation started
+      {"type": "done", "metadata": {...}}   — terminal event with usage + latency
+
+    A final metadata dict is yielded so the caller can emit metrics and write
+    the vault record once the stream closes. The caller is responsible for
+    turning dicts into NDJSON bytes.
+    """
+    start_ms = int(time.monotonic() * 1000)
+
+    s3sm = S3SessionManager(
+        session_id=session_id,
+        bucket=os.environ["PROMPT_VAULT_BUCKET"],
+        prefix="strands-sessions/hr-assistant/",
+        region_name=os.environ.get("AWS_REGION", "us-east-2"),
+    )
+
+    agent = Agent(
+        model=_model,
+        tools=[glean_search, retrieve_hr_documents],
+        system_prompt=_SYSTEM_PROMPT_TEXT,
+        session_manager=s3sm,
+        conversation_manager=SlidingWindowConversationManager(window_size=10),
+        callback_handler=None,
+    )
+
+    response_chars = 0
+    input_tokens = 0
+    output_tokens = 0
+    stop_reason = "unknown"
+    tool_calls = 0
+
+    first_event_logged = False
+    first_text_logged = False
+    async for event in agent.stream_async(user_message):
+        if not first_event_logged:
+            logger.info(json.dumps({
+                "event": "strands_stream_first_event",
+                "session_id": session_id,
+                "dt_ms": int(time.monotonic() * 1000) - start_ms,
+            }))
+            first_event_logged = True
+        if isinstance(event, dict) and "data" in event:
+            chunk = event["data"]
+            if chunk:
+                response_chars += len(chunk)
+                if not first_text_logged:
+                    logger.info(json.dumps({
+                        "event": "strands_stream_first_text",
+                        "session_id": session_id,
+                        "dt_ms": int(time.monotonic() * 1000) - start_ms,
+                    }))
+                    first_text_logged = True
+                yield {"type": "text", "data": chunk}
+        elif isinstance(event, dict) and event.get("current_tool_use"):
+            tool_calls += 1
+            tool_name = event["current_tool_use"].get("name", "")
+            yield {"type": "tool_use", "name": tool_name}
+        elif isinstance(event, dict) and event.get("result") is not None:
+            result = event["result"]
+            stop_reason = getattr(result, "stop_reason", "unknown")
+            invocations = result.metrics.agent_invocations if hasattr(result, "metrics") else []
+            usage = invocations[-1].usage if invocations else {}
+            input_tokens = usage.get("inputTokens", 0)
+            output_tokens = usage.get("outputTokens", 0)
+
+    latency_ms = int(time.monotonic() * 1000) - start_ms
+
+    log_event = {
+        "event": "strands_stream_invoke",
+        "session_id": session_id,
+        "stop_reason": stop_reason,
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "latency_ms": latency_ms,
+        "response_chars": response_chars,
+        "tool_calls": tool_calls,
+    }
+    if trace_context:
+        log_event["trace_id"] = trace_context.get("trace_id", "")
+        log_event["parent_span_id"] = trace_context.get("span_id", "")
+    logger.info(json.dumps(log_event))
+
+    yield {
+        "type": "done",
+        "metadata": {
+            "stop_reason": stop_reason,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "latency_ms": latency_ms,
+            "response_chars": response_chars,
+            "tool_calls": tool_calls,
+        },
     }
