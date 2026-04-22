@@ -14,6 +14,7 @@ override.tf.json
 *.zip
 terraform/modules/glean-stub/build/
 terraform/dev/agents/hr-assistant/prompt-vault/build/
+terraform/dev/platform/quality-scorer/build/
 
 # Secrets
 *.pem
@@ -23,3 +24,6 @@ terraform/dev/agents/hr-assistant/prompt-vault/build/
 
 # OS
 .DS_Store
+
+# Claude Code local session state
+.claude/
