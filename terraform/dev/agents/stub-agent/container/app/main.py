@@ -19,11 +19,18 @@ import os
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app import log_handler
+
 logging.basicConfig(
     level=getattr(logging, os.environ.get("LOG_LEVEL", "INFO")),
     format="%(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Direct-write CloudWatch handler. The AgentCore sidecar silently drops
+# stdout events on some runtimes — this delivers app logs via PutLogEvents
+# to APP_LOG_GROUP so diagnostics (stub_invoke, etc.) are always visible.
+log_handler.install()
 
 _AGENT_ID = "stub-agent-dev"
 _PREFIX = "[stub-agent] received:"

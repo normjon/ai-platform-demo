@@ -4,7 +4,9 @@
 #
 # Covers Phase O.5.j from specs/orchestrator-plan.md:
 #   S1 — Direct invocation returns [stub-agent] received: <prompt>
-#   S2 — CloudWatch runtime log contains stub_invoke event
+#   S2 — App log group contains stub_invoke event (direct-write handler —
+#        AgentCore's stdout sidecar is unreliable, so the container calls
+#        PutLogEvents directly against APP_LOG_GROUP)
 #
 # The orchestrator-side dispatch test (O.5.b) lives in
 # terraform/dev/agents/orchestrator/smoke-test.sh — exercising it from here
@@ -44,10 +46,12 @@ fi
 
 ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/null)
 RUNTIME_ARN="arn:aws:bedrock-agentcore:${REGION}:${ACCOUNT_ID}:runtime/${AGENTCORE_ENDPOINT_ID}"
-LOG_GROUP="/aws/bedrock-agentcore/runtimes/${AGENTCORE_ENDPOINT_ID}-DEFAULT"
+RUNTIME_LOG_GROUP="/aws/bedrock-agentcore/runtimes/${AGENTCORE_ENDPOINT_ID}-DEFAULT"
+APP_LOG_GROUP=$(terraform output -raw app_log_group_name 2>/dev/null || echo "/ai-platform/stub-agent/app-dev")
 
-echo "  Stub runtime:  ${AGENTCORE_ENDPOINT_ID}"
-echo "  Log group:     ${LOG_GROUP}"
+echo "  Stub runtime:      ${AGENTCORE_ENDPOINT_ID}"
+echo "  Runtime log group: ${RUNTIME_LOG_GROUP}"
+echo "  App log group:     ${APP_LOG_GROUP}"
 echo ""
 
 # ---------------------------------------------------------------------------
@@ -78,17 +82,17 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Test S2 — CloudWatch runtime log contains stub_invoke event
+# Test S2 — App log group contains stub_invoke event (direct-write handler)
 # ---------------------------------------------------------------------------
 
-echo "Test S2 — CloudWatch runtime log contains stub_invoke event"
+echo "Test S2 — App log group contains stub_invoke event"
 
 STUB_LOG_FOUND="false"
 for i in $(seq 1 6); do
   START_MS=$(( ($(date +%s) - 300) * 1000 ))
   EVENTS=$(aws logs filter-log-events \
     --region "${REGION}" \
-    --log-group-name "${LOG_GROUP}" \
+    --log-group-name "${APP_LOG_GROUP}" \
     --start-time "${START_MS}" \
     --filter-pattern '"stub_invoke"' \
     --query 'events[*].message' \
@@ -102,9 +106,9 @@ for i in $(seq 1 6); do
 done
 
 if [ "${STUB_LOG_FOUND}" = "true" ]; then
-  pass "CloudWatch runtime log contains stub_invoke event"
+  pass "App log group contains stub_invoke event"
 else
-  fail "No stub_invoke event in ${LOG_GROUP} (last 5 min)"
+  fail "No stub_invoke event in ${APP_LOG_GROUP} (last 5 min)"
 fi
 
 # ---------------------------------------------------------------------------
