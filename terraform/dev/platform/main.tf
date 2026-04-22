@@ -169,6 +169,11 @@ resource "aws_iam_role_policy" "agentcore_runtime" {
         Resource = [
           "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/aws/bedrock-agentcore/runtimes/*",
           "${local.agentcore_log_group_arn}:*",
+          # Per-agent direct-write diagnostic log groups. Bypasses the AgentCore
+          # stdout-capture sidecar, which has been observed to silently drop
+          # stdout on some runtimes. Wildcard covers current and future agents
+          # using the naming convention /ai-platform/<agent>/app-<env>.
+          "arn:aws:logs:${var.aws_region}:${var.account_id}:log-group:/ai-platform/*/app-${var.environment}:*",
         ]
       },
       {

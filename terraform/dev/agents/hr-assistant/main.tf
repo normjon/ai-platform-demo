@@ -118,7 +118,9 @@ locals {
 # Write manifest to S3 agent registry for auditability and runtime reference.
 # The manifest JSON is stored alongside the agent registry DynamoDB table.
 resource "terraform_data" "hr_assistant_manifest" {
-  # Re-register when any manifest input changes.
+  # Re-register when any manifest input changes. Orchestrator discovery
+  # fields (domains, tier, enabled, owner_team) are listed as literals so
+  # a value change re-fires the put-item.
   triggers_replace = [
     aws_bedrockagent_prompt.hr_assistant_system.arn,
     aws_bedrock_guardrail.hr_assistant.guardrail_id,
@@ -129,6 +131,11 @@ resource "terraform_data" "hr_assistant_manifest" {
     aws_bedrockagent_knowledge_base.hr_policies.id,
     "an enterprise HR Assistant that answers employee questions about HR policies, benefits, and workplace procedures",
     aws_lambda_function.prompt_vault_writer.arn,
+    # Orchestrator discovery fields.
+    "hr.policy,hr.escalation",
+    "conversational",
+    "false",
+    "hr-platform",
   ]
 
   provisioner "local-exec" {
@@ -157,6 +164,10 @@ resource "terraform_data" "hr_assistant_manifest" {
           "monthly_usd_limit": {"N": "50"},
           "alert_threshold_pct": {"N": "80"},
           "knowledge_base_id": {"S": "${aws_bedrockagent_knowledge_base.hr_policies.id}"},
+          "domains":         {"SS": ["hr.policy", "hr.escalation"]},
+          "tier":            {"S": "conversational"},
+          "enabled":         {"BOOL": false},
+          "owner_team":      {"S": "hr-platform"},
           "environment":     {"S": "${var.environment}"},
           "registered_at":   {"S": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
         }'

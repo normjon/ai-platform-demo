@@ -198,3 +198,33 @@ resource "aws_vpc_endpoint" "cloudwatch_monitoring" {
   private_dns_enabled = true
   tags                = merge(var.tags, { Name = "${var.name_prefix}-monitoring-endpoint" })
 }
+
+# comprehend: DetectPiiEntities for orchestrator inbound/outbound PII scanning.
+# Without this endpoint, boto3 resolves a public IP with no route from the private
+# subnet and the call hangs for the full boto3 socket timeout (~60s) — the
+# orchestrator calls Comprehend twice per request, so AgentCore's health check
+# times out before the handler returns.
+resource "aws_vpc_endpoint" "comprehend" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.comprehend"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-comprehend-endpoint" })
+}
+
+# bedrock-agentcore (data plane): required for the orchestrator container to call
+# InvokeAgentRuntime against sibling runtimes. Without this, boto3 resolves
+# bedrock-agentcore.us-east-2.amazonaws.com to a public IP that has no route from
+# the private subnet and the nested invoke hangs until AgentCore's health check
+# times out.
+resource "aws_vpc_endpoint" "bedrock_agentcore" {
+  vpc_id              = aws_vpc.this.id
+  service_name        = "com.amazonaws.${data.aws_region.current.region}.bedrock-agentcore"
+  vpc_endpoint_type   = "Interface"
+  subnet_ids          = aws_subnet.private[*].id
+  security_group_ids  = [aws_security_group.agentcore.id]
+  private_dns_enabled = true
+  tags                = merge(var.tags, { Name = "${var.name_prefix}-bedrock-agentcore-endpoint" })
+}
