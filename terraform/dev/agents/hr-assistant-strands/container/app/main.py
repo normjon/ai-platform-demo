@@ -288,6 +288,22 @@ async def _sse_stream(session_id: str, user_message: str, trace_context: dict[st
     t0 = _t.monotonic()
     first_yield_logged = False
 
+    # Phase 2: announce pipeline entry before Strands setup so clients can
+    # render progress during S3SessionManager load + first Bedrock TTFT.
+    context_loading_event = {
+        "type": "stage",
+        "stage": "context_loading",
+        "message": "Loading conversation context…",
+        "schema_version": "1",
+    }
+    logger.info(json.dumps({
+        "event": "strands_stream_stage_emitted",
+        "session_id": session_id,
+        "stage": "context_loading",
+        "dt_ms": 0,
+    }))
+    yield f"data: {json.dumps(context_loading_event)}\n\n".encode()
+
     try:
         async for event in agent_strands.invoke_stream(
             session_id=session_id,

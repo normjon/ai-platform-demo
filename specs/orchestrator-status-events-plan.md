@@ -1,6 +1,6 @@
 # Orchestrator Status Events — Design Spec (Draft)
 
-**Status:** Phase 1 approved; Phase 2 deferred to a fast-follow PR.
+**Status:** Phase 1 shipped (PR #39); Phase 2 in progress (this branch).
 **Author:** Claude Code
 **Date:** 2026-04-23
 **Related code:** `terraform/dev/agents/orchestrator/container/app/main.py` (`_sse_passthrough`)
@@ -136,20 +136,75 @@ actually sees today.
 
 ---
 
-## Phase 2 — Sub-agent cooperation (deferred; notes only)
+## Phase 2 — Sub-agent cooperation (hr-assistant-strands)
 
-To surface `"Retrieving policy context…"` / `"Composing response…"` the
-**sub-agent** has to emit `stage` events from inside its own pipeline.
-For `hr-assistant-strands` that means:
+**Goal:** fill the 17-second silent window measured between `dispatching`
+(T+5s) and first sub-agent `text` (T+22s) in Phase 1's production-dev
+verification. The orchestrator forwards sub-agent frames verbatim, so
+Phase 2 is entirely a sub-agent container change — no orchestrator
+redeploy required.
 
-- A small helper that yields `stage` events before each major block
-  (KB retrieve, Strands Agent loop, guardrail evaluation).
-- Existing SSE framing in the strands container already supports this —
-  just new event types.
+**Stage vocabulary (sub-agent-emitted).** Every `stage` frame carries
+`schema_version: "1"` stamped by the sub-agent. The orchestrator does
+not rewrite it — this is the first case of a non-orchestrator frame
+bearing the version field, but it fits the "part of the public
+vocabulary defined in this spec" rule.
 
-**Not in scope for the first PR.** Recommend landing Phase 1, measuring
-perceived-latency improvement, then deciding whether Phase 2 is worth
-the cross-layer coordination.
+| `stage` code | `message` (default) | Emit point in `hr-assistant-strands` |
+|---|---|---|
+| `context_loading` | "Loading conversation context…" | First line of `_sse_stream` in `main.py`, before `agent_strands.invoke_stream` is called |
+| `reasoning` | "Analyzing your request…" | Inside `invoke_stream`, immediately before `agent.stream_async(user_message)` — exactly once per turn |
+| `tool_use` | "Searching the knowledge base…" (per-tool map below) | In `invoke_stream` on each Strands `current_tool_use` event — fires 0..N times depending on what the LLM decides |
+| `composing` | "Composing response…" | On the first Strands text event that follows a `tool_use` event — fires once per tool→text transition (typically once) |
+
+**Per-tool friendly messages** (for the `tool_use` stage's `message`
+field; `tool` field always carries the raw name):
+
+| Tool name | `message` |
+|---|---|
+| `glean_search` | "Searching the knowledge base…" |
+| `retrieve_hr_documents` | "Retrieving HR policy context…" |
+| (unknown tool) | "Running tool `<name>`…" (fallback) |
+
+**Frame shape (required fields):**
+
+```json
+{
+  "type": "stage",
+  "stage": "<code>",
+  "message": "<human sentence>",
+  "schema_version": "1"
+}
+```
+
+Optional additional fields by stage:
+- `tool_use` MAY include `tool: "<raw_name>"` so clients can disambiguate
+  when the friendly `message` has been localized.
+
+**Emission rules — LLM non-determinism:**
+- `context_loading` and `reasoning` fire exactly once per turn.
+- `tool_use` fires per Strands `current_tool_use` event; same tool called
+  twice emits two frames.
+- `composing` is a *transition* detector, not a fixed phase — it fires
+  once on the first text event after any `tool_use` in a turn. If the
+  LLM never calls a tool, `composing` is never emitted (the `text`
+  frames are the signal).
+
+**Implementation — file-level changes:**
+
+1. `hr-assistant-strands/container/app/main.py:_sse_stream` — prepend a
+   `context_loading` stage frame before calling `invoke_stream`.
+2. `hr-assistant-strands/container/app/agent_strands.py:invoke_stream` —
+   yield `reasoning` before `agent.stream_async`; yield `tool_use` with
+   friendly message on each `current_tool_use` event; yield `composing`
+   on the first text event that follows a `tool_use`.
+3. `hr-assistant-strands/smoke-test.sh` — streaming assertion: the
+   stream contains at least one `stage` event and every `stage` frame
+   carries `schema_version: "1"`.
+
+**Timing logs (same convention as Phase 1):**
+- `strands_stream_stage_emitted` — one line per stage emitted, with
+  `stage`, `dt_ms` since `_sse_stream` entry, `session_id`.
 
 ---
 
