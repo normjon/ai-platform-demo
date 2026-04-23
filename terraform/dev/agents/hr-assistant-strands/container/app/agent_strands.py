@@ -43,6 +43,31 @@ _MODEL_ID: str = ""  # exposed for main.py vault.write() call
 
 
 # ---------------------------------------------------------------------------
+# Stage event helpers — Phase 2 of orchestrator status events.
+# See specs/orchestrator-status-events-plan.md → Phase 2.
+# ---------------------------------------------------------------------------
+
+_TOOL_STAGE_MESSAGES: dict[str, str] = {
+    "glean_search": "Searching the knowledge base…",
+    "retrieve_hr_documents": "Retrieving HR policy context…",
+}
+
+
+def _stage_event(stage: str, message: str, **extras: Any) -> dict[str, Any]:
+    return {
+        "type": "stage",
+        "stage": stage,
+        "message": message,
+        "schema_version": "1",
+        **extras,
+    }
+
+
+def _stage_message_for_tool(name: str) -> str:
+    return _TOOL_STAGE_MESSAGES.get(name, f"Running tool `{name}`…")
+
+
+# ---------------------------------------------------------------------------
 # Tools
 # ---------------------------------------------------------------------------
 
@@ -288,6 +313,19 @@ async def invoke_stream(
     output_tokens = 0
     stop_reason = "unknown"
     tool_calls = 0
+    pending_composing = False
+    last_tool_stage_name: str | None = None
+
+    def _log_stage(stage: str) -> None:
+        logger.info(json.dumps({
+            "event": "strands_stream_stage_emitted",
+            "session_id": session_id,
+            "stage": stage,
+            "dt_ms": int(time.monotonic() * 1000) - start_ms,
+        }))
+
+    yield _stage_event("reasoning", "Analyzing your request…")
+    _log_stage("reasoning")
 
     first_event_logged = False
     first_text_logged = False
@@ -302,6 +340,13 @@ async def invoke_stream(
         if isinstance(event, dict) and "data" in event:
             chunk = event["data"]
             if chunk:
+                if pending_composing:
+                    yield _stage_event("composing", "Composing response…")
+                    _log_stage("composing")
+                    pending_composing = False
+                # Text flow has resumed — if the LLM decides to call another
+                # tool after this, it should re-emit the tool_use stage.
+                last_tool_stage_name = None
                 response_chars += len(chunk)
                 if not first_text_logged:
                     logger.info(json.dumps({
@@ -312,8 +357,20 @@ async def invoke_stream(
                     first_text_logged = True
                 yield {"type": "text", "data": chunk}
         elif isinstance(event, dict) and event.get("current_tool_use"):
-            tool_calls += 1
             tool_name = event["current_tool_use"].get("name", "")
+            # Strands emits current_tool_use repeatedly during a single tool
+            # invocation (start + arg deltas). Dedupe on name so we emit one
+            # stage frame per tool, not one per delta.
+            if tool_name != last_tool_stage_name:
+                tool_calls += 1
+                yield _stage_event(
+                    "tool_use",
+                    _stage_message_for_tool(tool_name),
+                    tool=tool_name,
+                )
+                _log_stage(f"tool_use:{tool_name}")
+                last_tool_stage_name = tool_name
+                pending_composing = True
             yield {"type": "tool_use", "name": tool_name}
         elif isinstance(event, dict) and event.get("result") is not None:
             result = event["result"]

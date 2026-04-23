@@ -12,7 +12,8 @@
 #   8c — Live AgentCore invocation (Strands runtime, streaming SSE): distress → 1800-EAP-HELP
 #   8d — Prompt Vault Lambda writes to S3 (direct invocation, shared Lambda)
 #   8e — CloudWatch logs confirm strands_invoke event for test 8a session
-#   8f — CloudWatch logs confirm kb_retrieve event for test 8a session
+#   8f — CloudWatch logs confirm kb_retrieve event for test 8a
+#   8g — Streaming emits at least one `stage` event with schema_version "1" session
 
 set -uo pipefail
 
@@ -339,6 +340,67 @@ if [ "${KB_LOG_FOUND}" = "true" ]; then
   pass "CloudWatch logs confirm kb_retrieve event with KB ID ${KNOWLEDGE_BASE_ID}"
 else
   fail "No kb_retrieve event found in ${LOG_GROUP} for KB ${KNOWLEDGE_BASE_ID} (last 5 min)"
+fi
+
+# ---------------------------------------------------------------------------
+# Test 8g — Streaming emits stage events (Phase 2)
+#
+# Asserts the sub-agent emits at least one `stage` event during a streaming
+# invocation, and that every stage frame carries schema_version: "1".
+# See specs/orchestrator-status-events-plan.md → Phase 2.
+# ---------------------------------------------------------------------------
+
+echo "Test 8g — Streaming emits stage events with schema_version"
+SESSION_8G="smoke-8g-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+RESPONSE_FILE_8G="/tmp/smoke-8g-${TEST_TS}.ndjson"
+PAYLOAD_8G=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'How many days of annual leave am I entitled to?','sessionId':'${SESSION_8G}','stream':True}).encode()).decode())")
+
+aws bedrock-agentcore invoke-agent-runtime \
+  --region "${REGION}" \
+  --agent-runtime-arn "${RUNTIME_ARN}" \
+  --runtime-session-id "${SESSION_8G}" \
+  --payload "${PAYLOAD_8G}" \
+  "${RESPONSE_FILE_8G}" > /dev/null 2>&1
+INVOKE_EXIT_8G=$?
+
+ASSERT_8G=$(python3 -c "
+import json
+stages_seen = []
+schema_bad = []
+try:
+    with open('${RESPONSE_FILE_8G}') as f:
+        raw = f.read()
+    for frame in raw.split('\n\n'):
+        payload = ''
+        for line in frame.split('\n'):
+            if line.startswith('data:'):
+                payload += line[5:].lstrip()
+        if not payload:
+            continue
+        try:
+            event = json.loads(payload)
+        except Exception:
+            continue
+        if event.get('type') == 'stage':
+            stages_seen.append(event.get('stage', '?'))
+            if event.get('schema_version') != '1':
+                schema_bad.append(event.get('stage', '?'))
+    if not stages_seen:
+        print('FAIL:no_stage_events')
+    elif schema_bad:
+        print(f'FAIL:missing_schema_version:{schema_bad}')
+    else:
+        print(f'OK:{stages_seen}')
+except Exception as exc:
+    print(f'FAIL:read_error:{exc}')
+" 2>/dev/null)
+
+rm -f "${RESPONSE_FILE_8G}"
+
+if [ "${INVOKE_EXIT_8G}" -eq 0 ] && [[ "${ASSERT_8G}" == OK:* ]]; then
+  pass "Streaming emitted stage events (${ASSERT_8G#OK:}) with schema_version=1"
+else
+  fail "Stage event assertion failed: exit=${INVOKE_EXIT_8G} result=${ASSERT_8G}"
 fi
 
 # ---------------------------------------------------------------------------
