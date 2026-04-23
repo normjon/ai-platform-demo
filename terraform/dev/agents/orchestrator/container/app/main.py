@@ -70,6 +70,24 @@ async def invocations(request: Request, background_tasks: BackgroundTasks) -> Re
     trace_ctx = tracing.new_trace_context()
     start_ms = int(time.monotonic() * 1000)
 
+    # Streaming path: PII scan + audit happen inside _sse_passthrough so the
+    # `validating` status event can fire before the scan runs. See
+    # specs/orchestrator-status-events-plan.md (Phase 1).
+    if bool(body.get("stream", False)):
+        return StreamingResponse(
+            _sse_passthrough(
+                request_id=request_id,
+                session_id=session_id,
+                user_message=user_message,
+                user_role=user_role,
+                trace_ctx=trace_ctx,
+                start_ms=start_ms,
+                background_tasks=background_tasks,
+            ),
+            media_type="text/event-stream",
+            background=background_tasks,
+        )
+
     pii_in = await asyncio.to_thread(middleware.scan_and_redact, user_message)
     audit.record_request(
         request_id=request_id,
@@ -79,28 +97,6 @@ async def invocations(request: Request, background_tasks: BackgroundTasks) -> Re
         prompt=user_message,
         pii_types_inbound=pii_in.pii_types,
     )
-
-    # Streaming passthrough. Runs the Strands supervisor in routing-only mode
-    # to pick a domain, then forwards the sub-agent's SSE stream directly to
-    # the caller. AgentCore only flushes chunks progressively when the
-    # container advertises Content-Type: text/event-stream — any other type
-    # (NDJSON included) is buffered server-side until EOF. Outbound PII is
-    # enforced by the sub-agent's guardrail; the orchestrator does not
-    # re-scan streaming responses.
-    if bool(body.get("stream", False)):
-        return StreamingResponse(
-            _sse_passthrough(
-                request_id=request_id,
-                session_id=session_id,
-                user_message=pii_in.redacted_text,
-                trace_ctx=trace_ctx,
-                pii_inbound_count=len(pii_in.pii_types),
-                start_ms=start_ms,
-                background_tasks=background_tasks,
-            ),
-            media_type="text/event-stream",
-            background=background_tasks,
-        )
 
     try:
         result = await asyncio.to_thread(
@@ -167,26 +163,74 @@ async def invocations(request: Request, background_tasks: BackgroundTasks) -> Re
 # see exactly one event per `data:` line.
 # ---------------------------------------------------------------------------
 
+def _agent_name_from_id(agent_id: str | None) -> str:
+    """Title-cased, hyphen-to-space rendering of an agent_id for UI display.
+
+    Registry-hosted friendly name deferred; see
+    specs/orchestrator-status-events-plan.md (Field conventions).
+    """
+    if not agent_id:
+        return ""
+    return agent_id.replace("-", " ").title()
+
+
 async def _sse_passthrough(
     request_id: str,
     session_id: str,
     user_message: str,
+    user_role: str,
     trace_ctx: dict,
-    pii_inbound_count: int,
     start_ms: int,
     background_tasks: BackgroundTasks,
 ):
     import boto3
-    from app import audit, config, metrics, orchestrator, tracing
+    from app import audit, config, middleware, metrics, orchestrator, tracing
 
     def _sse(event: dict) -> bytes:
+        # schema_version is stamped on every orchestrator-emitted frame.
+        # Pass-through sub-agent frames are forwarded verbatim elsewhere.
+        event = {"schema_version": "1", **event}
         return f"data: {json.dumps(event)}\n\n".encode()
 
+    # T0 — request accepted. Clients can immediately render "Processing…".
+    logger.info(json.dumps({
+        "event": "orchestrator_stream_received",
+        "request_id": request_id,
+        "session_id": session_id,
+        "trace_id": trace_ctx["trace_id"],
+        **tracing.log_fields(),
+    }))
+    yield _sse({
+        "type": "received",
+        "request_id": request_id,
+        "trace_id": trace_ctx["trace_id"],
+    })
+
+    # Validating: always emitted (no threshold). PII scan + audit.record_request
+    # run inside the streaming path so this event can fire before the scan.
+    yield _sse({"type": "validating"})
+    pii_in = await asyncio.to_thread(middleware.scan_and_redact, user_message)
+    audit.record_request(
+        request_id=request_id,
+        session_id=session_id,
+        user_role=user_role,
+        trace_id=trace_ctx["trace_id"],
+        prompt=user_message,
+        pii_types_inbound=pii_in.pii_types,
+    )
+    logger.info(json.dumps({
+        "event": "orchestrator_stream_validating",
+        "request_id": request_id,
+        "pii_inbound": len(pii_in.pii_types),
+        **tracing.log_fields(),
+    }))
+
+    routing_start_ms = int(time.monotonic() * 1000)
     try:
         result = await asyncio.to_thread(
             orchestrator.invoke,
             session_id=session_id,
-            user_message=user_message,
+            user_message=pii_in.redacted_text,
             routing_only=True,
         )
     except Exception as exc:
@@ -202,11 +246,22 @@ async def _sse_passthrough(
 
     dispatched_agent = result.get("dispatched_agent")
     runtime_arn = result.get("runtime_arn")
+    domain = result.get("domain")
+    latency_ms_to_decision = int(time.monotonic() * 1000) - routing_start_ms
 
-    # Routing header — clients can display "Dispatching to HR Assistant..."
+    logger.info(json.dumps({
+        "event": "orchestrator_stream_routing_decided",
+        "request_id": request_id,
+        "agent_id": dispatched_agent,
+        "domain": domain,
+        "latency_ms_to_decision": latency_ms_to_decision,
+        **tracing.log_fields(),
+    }))
     yield _sse({
         "type": "routing",
         "agent_id": dispatched_agent,
+        "agent_name": _agent_name_from_id(dispatched_agent),
+        "domain": domain,
         "request_id": request_id,
         "trace_id": trace_ctx["trace_id"],
     })
@@ -233,14 +288,21 @@ async def _sse_passthrough(
             latency_ms=result["latency_ms"],
             input_tokens=result["input_tokens"],
             output_tokens=result["output_tokens"],
-            pii_inbound=pii_inbound_count,
+            pii_inbound=len(pii_in.pii_types),
             pii_outbound=0,
         )
+        logger.info(json.dumps({
+            "event": "orchestrator_stream_done",
+            "request_id": request_id,
+            "reason": "no_dispatch",
+            "latency_ms": duration_ms,
+            **tracing.log_fields(),
+        }))
         return
 
     sub_session = f"{session_id}-{dispatched_agent}"
     sub_payload = json.dumps({
-        "prompt": user_message,
+        "prompt": pii_in.redacted_text,
         "sessionId": sub_session,
         "stream": True,
         "trace_context": tracing.current_trace_context(),
@@ -254,6 +316,18 @@ async def _sse_passthrough(
             runtimeSessionId=sub_session,
             payload=sub_payload,
         )
+
+    yield _sse({
+        "type": "dispatching",
+        "agent_id": dispatched_agent,
+        "agent_name": _agent_name_from_id(dispatched_agent),
+    })
+    logger.info(json.dumps({
+        "event": "orchestrator_stream_dispatching",
+        "request_id": request_id,
+        "agent_id": dispatched_agent,
+        **tracing.log_fields(),
+    }))
 
     try:
         sub_resp = await asyncio.to_thread(_invoke_sub)
@@ -270,6 +344,7 @@ async def _sse_passthrough(
     accumulated = []
     sub_metadata: dict = {}
     body_stream = sub_resp["response"]
+    first_frame_logged = False
 
     def _read_chunk():
         return body_stream.read(4096)
@@ -295,6 +370,15 @@ async def _sse_passthrough(
                 event = json.loads(payload)
             except Exception:
                 continue
+            if not first_frame_logged:
+                logger.info(json.dumps({
+                    "event": "orchestrator_stream_first_subagent_frame",
+                    "request_id": request_id,
+                    "agent_id": dispatched_agent,
+                    "latency_ms_since_received": int(time.monotonic() * 1000) - start_ms,
+                    **tracing.log_fields(),
+                }))
+                first_frame_logged = True
             if event.get("type") == "text":
                 accumulated.append(event.get("data", ""))
             elif event.get("type") == "done":
@@ -335,6 +419,13 @@ async def _sse_passthrough(
         latency_ms=sub_metadata.get("latency_ms", 0),
         input_tokens=sub_metadata.get("input_tokens", 0),
         output_tokens=sub_metadata.get("output_tokens", 0),
-        pii_inbound=pii_inbound_count,
+        pii_inbound=len(pii_in.pii_types),
         pii_outbound=0,
     )
+    logger.info(json.dumps({
+        "event": "orchestrator_stream_done",
+        "request_id": request_id,
+        "agent_id": dispatched_agent,
+        "latency_ms": duration_ms,
+        **tracing.log_fields(),
+    }))
