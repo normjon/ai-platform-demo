@@ -360,6 +360,93 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Test O8 — Status event sequence + schema_version (Phase 1 of status-events spec)
+# See: specs/orchestrator-status-events-plan.md
+# ---------------------------------------------------------------------------
+
+echo "Test O8 — Orchestrator status events (received → validating → routing → dispatching → text → done)"
+SESSION_O8="smoke-o8-$(uuidgen | tr '[:upper:]' '[:lower:]')"
+RESPONSE_FILE_O8="/tmp/smoke-o8-${TEST_TS}.sse"
+PAYLOAD_O8=$(python3 -c "import json,base64; print(base64.b64encode(json.dumps({'prompt':'How many days of annual leave am I entitled to?','sessionId':'${SESSION_O8}','stream':True}).encode()).decode())")
+
+aws bedrock-agentcore invoke-agent-runtime \
+  --region "${REGION}" \
+  --agent-runtime-arn "${RUNTIME_ARN}" \
+  --runtime-session-id "${SESSION_O8}" \
+  --payload "${PAYLOAD_O8}" \
+  "${RESPONSE_FILE_O8}" > /dev/null 2>&1
+INVOKE_O8_EXIT=$?
+
+O8_REPORT=$(python3 <<PYEOF 2>/dev/null
+import json
+
+# Phase 1: orchestrator-emitted frames carry schema_version='1'.
+# Sub-agent pass-through frames (text, tool_use, sub-agent's own done)
+# are forwarded verbatim and exempt from this check.
+ORCH_EMITTED = {'received', 'validating', 'routing', 'dispatching'}
+
+types_in_order = []
+missing_schema = []
+try:
+    with open('${RESPONSE_FILE_O8}') as f:
+        raw = f.read()
+    for frame in raw.split('\n\n'):
+        payload = ''
+        for line in frame.split('\n'):
+            if line.startswith('data:'):
+                payload += line[5:].lstrip()
+        if not payload:
+            continue
+        try:
+            event = json.loads(payload)
+        except Exception:
+            continue
+        t = event.get('type', '<none>')
+        types_in_order.append(t)
+        if t in ORCH_EMITTED and event.get('schema_version') != '1':
+            missing_schema.append(t)
+except Exception:
+    pass
+
+def index_of(t):
+    return types_in_order.index(t) if t in types_in_order else -1
+
+first_type  = types_in_order[0] if types_in_order else '<empty>'
+i_received    = index_of('received')
+i_validating  = index_of('validating')
+i_routing     = index_of('routing')
+i_dispatching = index_of('dispatching')
+i_first_text  = index_of('text')
+
+order_ok = (
+    i_received == 0
+    and 0 <= i_validating and i_validating < i_routing
+    and 0 <= i_routing and i_routing < i_dispatching
+    and 0 <= i_dispatching and (i_first_text == -1 or i_dispatching < i_first_text)
+)
+schema_ok = not missing_schema
+
+print('OK' if (order_ok and schema_ok) else 'FAIL')
+print(','.join(types_in_order) or '<none>')
+print(first_type)
+print(','.join(missing_schema) or '<none>')
+PYEOF
+)
+
+O8_STATUS=$(echo "${O8_REPORT}" | sed -n '1p')
+O8_SEQUENCE=$(echo "${O8_REPORT}" | sed -n '2p')
+O8_FIRST=$(echo "${O8_REPORT}" | sed -n '3p')
+O8_MISSING=$(echo "${O8_REPORT}" | sed -n '4p')
+
+rm -f "${RESPONSE_FILE_O8}"
+
+if [ "${INVOKE_O8_EXIT}" -eq 0 ] && [ "${O8_STATUS}" = "OK" ]; then
+  pass "Status events in order (first=${O8_FIRST}, schema_version=1 on all frames)"
+else
+  fail "Status event sequence/schema_version wrong — exit=${INVOKE_O8_EXIT} first=${O8_FIRST} sequence=${O8_SEQUENCE} missing_schema=${O8_MISSING}"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 

@@ -116,6 +116,7 @@ def invoke(session_id: str, user_message: str, routing_only: bool = False) -> di
     finally:
         dispatched = dispatch.last_dispatched_agent(session_id)
         runtime_arn = dispatch.last_dispatched_runtime_arn(session_id)
+        domain = dispatch.last_dispatched_domain(session_id)
         dispatch.end_turn(session_id)
 
     latency_ms = int(time.monotonic() * 1000) - start_ms
@@ -138,6 +139,7 @@ def invoke(session_id: str, user_message: str, routing_only: bool = False) -> di
         "response": str(result),
         "dispatched_agent": dispatched,
         "runtime_arn": runtime_arn,
+        "domain": domain,
         "input_tokens": usage.get("inputTokens", 0),
         "output_tokens": usage.get("outputTokens", 0),
         "latency_ms": latency_ms,

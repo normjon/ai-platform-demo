@@ -50,6 +50,7 @@ _active_session_id: str | None = None
 _dispatched_count: int = 0
 _last_dispatched_agent: str | None = None
 _last_dispatched_runtime_arn: str | None = None
+_last_dispatched_domain: str | None = None
 _routing_only: bool = False
 
 
@@ -61,12 +62,13 @@ def begin_turn(session_id: str, routing_only: bool = False) -> None:
     then expected to invoke the sub-agent directly — used for streaming.
     """
     global _active_session_id, _dispatched_count, _last_dispatched_agent
-    global _last_dispatched_runtime_arn, _routing_only
+    global _last_dispatched_runtime_arn, _last_dispatched_domain, _routing_only
     with _state_lock:
         _active_session_id = session_id
         _dispatched_count = 0
         _last_dispatched_agent = None
         _last_dispatched_runtime_arn = None
+        _last_dispatched_domain = None
         _routing_only = routing_only
 
 
@@ -86,6 +88,11 @@ def last_dispatched_agent(session_id: str) -> str | None:
 def last_dispatched_runtime_arn(session_id: str) -> str | None:
     with _state_lock:
         return _last_dispatched_runtime_arn if _active_session_id == session_id else None
+
+
+def last_dispatched_domain(session_id: str) -> str | None:
+    with _state_lock:
+        return _last_dispatched_domain if _active_session_id == session_id else None
 
 
 @tool
@@ -156,10 +163,11 @@ def dispatch_agent(domain: str, message: str, session_id: str) -> dict:
         "trace_context": tracing.current_trace_context(),
     }).encode()
 
-    global _last_dispatched_runtime_arn
+    global _last_dispatched_runtime_arn, _last_dispatched_domain
     with _state_lock:
         _last_dispatched_agent = agent_id
         _last_dispatched_runtime_arn = runtime_arn
+        _last_dispatched_domain = domain
         routing_only = _routing_only
 
     # Routing-only mode: the handler will invoke the sub-agent directly with
