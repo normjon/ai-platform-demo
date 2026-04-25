@@ -22,9 +22,11 @@ from strands.models.bedrock import BedrockModel
 from strands.session import S3SessionManager
 
 from app import config, dispatch, registry, tracing
+from app.trace_hook import TraceHook
 
 logger = logging.getLogger(__name__)
 
+_AGENT_ID = "orchestrator-dev"
 _model: BedrockModel | None = None
 
 
@@ -109,6 +111,7 @@ def invoke(session_id: str, user_message: str, routing_only: bool = False) -> di
         session_manager=s3sm,
         conversation_manager=SlidingWindowConversationManager(window_size=10),
         callback_handler=None,
+        hooks=[TraceHook(_AGENT_ID, session_id, tracing.trace_id())],
     )
 
     try:
