@@ -24,8 +24,11 @@ from strands.models.bedrock import BedrockModel
 from strands.session import S3SessionManager
 from strands.agent.conversation_manager import SlidingWindowConversationManager
 
+from app.trace_hook import TraceHook
+
 logger = logging.getLogger(__name__)
 
+_AGENT_ID = "hr-assistant-strands-dev"
 _REGION = os.environ.get("AWS_REGION", "us-east-2")
 _lambda_client = boto3.client("lambda", region_name=_REGION)
 _bedrock_agent_runtime = boto3.client("bedrock-agent-runtime", region_name=_REGION)
@@ -227,6 +230,8 @@ def invoke(
         region_name=os.environ.get("AWS_REGION", "us-east-2"),
     )
 
+    trace_id = (trace_context or {}).get("trace_id", "")
+
     agent = Agent(
         model=_model,
         tools=[glean_search, retrieve_hr_documents],
@@ -234,6 +239,7 @@ def invoke(
         session_manager=s3sm,
         conversation_manager=SlidingWindowConversationManager(window_size=10),
         callback_handler=None,
+        hooks=[TraceHook(_AGENT_ID, session_id, trace_id)],
     )
 
     result = agent(user_message)
@@ -299,6 +305,8 @@ async def invoke_stream(
         region_name=os.environ.get("AWS_REGION", "us-east-2"),
     )
 
+    trace_id = (trace_context or {}).get("trace_id", "")
+
     agent = Agent(
         model=_model,
         tools=[glean_search, retrieve_hr_documents],
@@ -306,6 +314,7 @@ async def invoke_stream(
         session_manager=s3sm,
         conversation_manager=SlidingWindowConversationManager(window_size=10),
         callback_handler=None,
+        hooks=[TraceHook(_AGENT_ID, session_id, trace_id)],
     )
 
     response_chars = 0
