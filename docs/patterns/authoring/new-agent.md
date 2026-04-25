@@ -30,7 +30,8 @@ Add a new layer when the agent has:
 
 - Its own identity (distinct `agent_id`, registry entry)
 - Its own IAM role (Option B inline — never reuse another agent's role)
-- Its own container image (separate ECR repo)
+- Its own container image (separate ECR repo in the `ecr/` layer — see
+  [../layers/ecr.md](../layers/ecr.md))
 - Its own AgentCore runtime
 
 Do **not** fork an existing layer to add "a slight variant." Either extend
@@ -42,12 +43,16 @@ scaffold a fresh layer. Forks drift.
 ## Prerequisites
 
 1. `foundation/` applied in the target environment (VPC, KMS, VPC
-   endpoints, ECR state bucket).
-2. `platform/` applied and smoke tests pass (`agentcore_endpoint_id`,
+   endpoints).
+2. `ecr/` updated with a new `aws_ecr_repository.<agent>` resource (+
+   lifecycle policy + `<agent>_repository_url`/`<agent>_repository_arn`
+   outputs) and applied. See [../layers/ecr.md](../layers/ecr.md).
+   Agent layers do **not** create their own ECR repositories.
+3. `platform/` applied and smoke tests pass (`agentcore_endpoint_id`,
    `agent_registry_table`, `opensearch_collection_arn` etc. populated).
-3. For agents that use MCP tools: the corresponding `tools/<tool>/` layer
+4. For agents that use MCP tools: the corresponding `tools/<tool>/` layer
    applied and the gateway target registered.
-4. For orchestrator-dispatched sub-agents: at least one sub-agent layer
+5. For orchestrator-dispatched sub-agents: at least one sub-agent layer
    must have `enabled = true` in the registry before the orchestrator
    smoke tests will pass.
 
@@ -59,9 +64,9 @@ Minimum file set for a new agent at `terraform/<env>/agents/<name>/`:
 
 ```
 backend.tf                 # S3 remote state — key: <env>/agents/<name>/terraform.tfstate
-main.tf                    # Providers, remote state, ECR, IAM, runtime, log group, manifest
+main.tf                    # Providers, remote state (foundation + platform + ecr), IAM, runtime, log group, manifest
 variables.tf               # aws_region, environment, project_name, account_id, agent_image_uri, model_arn, ...
-outputs.tf                 # iam_role_arn, ecr_repository_url, agentcore_endpoint_id, agentcore_runtime_arn, app_log_group_name
+outputs.tf                 # iam_role_arn, agentcore_endpoint_id, agentcore_runtime_arn, app_log_group_name
 terraform.tfvars.example   # Committed template with placeholders
 terraform.tfvars           # Real values, GIT-IGNORED
 smoke-test.sh              # Runs against terraform outputs — no args
@@ -108,10 +113,11 @@ documented in the project-root `CLAUDE.md` — don't rediscover them.
 - **Inline IAM** (ADR-017 Option B). The runtime IAM role is created in
   this layer's `main.tf`. Never reuse another agent's role. Never move
   roles to `modules/iam/`.
-- **Two-step apply**. First apply with `agent_image_uri = ""` to create ECR
-  + IAM. Push the container to the new ECR repo. Set `agent_image_uri` to
-  the pushed URI and re-apply to land the runtime + registry entry. The
-  runtime resource is `count`-gated on `var.agent_image_uri != ""`.
+- **Two-step apply**. First apply with `agent_image_uri = ""` to create
+  IAM and the app log group. Push the container to the agent's repo in
+  the `ecr/` layer. Set `agent_image_uri` to the pushed URI and re-apply
+  to land the runtime + registry entry. The runtime resource is
+  `count`-gated on `var.agent_image_uri != ""`.
   Step 2 **will fail** the first time on
   `ResourceAlreadyExistsException` for the runtime log group — AgentCore
   pre-creates it. Import the group and re-apply; see
@@ -132,7 +138,7 @@ capabilities:
 | Sid | Required when | Notes |
 |---|---|---|
 | `ECRTokenAccess` | Always | `ecr:GetAuthorizationToken` on `*` |
-| `ECRPullImage` | Always | `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability` on this agent's ECR repo ARN |
+| `ECRPullImage` | Always | `ecr:BatchGetImage`, `ecr:GetDownloadUrlForLayer`, `ecr:BatchCheckLayerAvailability` on this agent's ECR repo ARN (read from `data.terraform_remote_state.ecr.outputs.<agent>_repository_arn`) |
 | `CloudWatchLogsWrite` | Always | Runtime log group auto-writes — scope to `arn:aws:logs:<region>:<account>:log-group:/aws/bedrock-agentcore/runtimes/*` |
 | `AppLogGroupDirectWrite` | Always | `logs:CreateLogStream` + `logs:PutLogEvents` on `${aws_cloudwatch_log_group.<agent>_app.arn}:*` |
 | `CloudWatchMetrics` | Always | `cloudwatch:PutMetricData` with `cloudwatch:namespace = bedrock-agentcore` condition |
@@ -186,6 +192,112 @@ docker push "${ECR_URI}:<prefix>-${GIT_SHA}"
 
 Use a short prefix per agent (`stub-`, `strands-`, `orchestrator-`) so tags
 are readable in ECR listings.
+
+---
+
+## Strands Hooks — Lifecycle Tracing (Strands agents only)
+
+Applies to any agent whose container uses the Strands SDK (`from strands
+import Agent`). Skip this section for non-Strands containers (the
+stub-agent, for example).
+
+Reference implementation:
+`terraform/dev/agents/hr-assistant-strands/container/app/trace_hook.py`.
+Spec: `ai-observability-platform/specs/trace-ingestion.md` §15.
+
+### Why hooks, not OTEL auto-instrumentation
+
+Strands' streaming path (`Agent.stream_async`) is **broken by any
+framework-level OTEL auto-wrap layer**. Confirmed broken in SDK 1.35.0:
+
+- `StrandsTelemetry().setup_otlp_exporter()` / `setup_meter()`
+- `aws-opentelemetry-distro` + the `opentelemetry-instrument` CMD wrapper
+
+Symptom: SSE invocations hang mid-stream; AgentCore reports "Runtime
+health check failed or timed out" even though `/ping` returns 200.
+
+The supported path is Strands' own typed hook system, which fires
+synchronous callbacks at lifecycle points without touching the async
+generator.
+
+**Do NOT in any Strands container:**
+- Add `aws-opentelemetry-distro` to `requirements.txt`.
+- Wrap the CMD with `opentelemetry-instrument`.
+- Call `StrandsTelemetry().setup_otlp_exporter` or `setup_meter`.
+
+### What to wire in
+
+1. Drop `trace_hook.py` next to `agent_strands.py` (copy from
+   `hr-assistant-strands/container/app/`). It defines a `TraceHook`
+   class implementing `HookProvider` with callbacks for
+   `BeforeInvocationEvent`, `AfterInvocationEvent`,
+   `BeforeToolCallEvent`, `AfterToolCallEvent`. Each callback is wrapped
+   in try/except → emits `trace_hook_error` and swallows; no callback
+   can kill an in-flight invocation.
+
+2. In the Strands agent module, import and pass an instance per
+   request:
+
+   ```python
+   from app.trace_hook import TraceHook
+
+   _AGENT_ID = "<agent>-<env>"
+
+   trace_id = (trace_context or {}).get("trace_id", "")  # populated
+                                                         # only on
+                                                         # orchestrator
+                                                         # dispatch
+   agent = Agent(
+       model=_model,
+       tools=[...],
+       session_manager=s3sm,
+       conversation_manager=SlidingWindowConversationManager(window_size=10),
+       callback_handler=None,
+       hooks=[TraceHook(_AGENT_ID, session_id, trace_id)],
+   )
+   ```
+
+   Construct a fresh `TraceHook` per invocation — the hook holds the
+   per-request `_invocation_start` / `_tool_starts` state.
+
+### Output
+
+Every callback emits a structured JSON line to the agent's app log
+group with the base fields `{trace_id, agent_id, session_id}` plus
+event-specific data:
+
+| Event | Extra fields |
+|---|---|
+| `agent_start` | (none) |
+| `tool_start` | `tool`, `tool_use_id`, `input_chars` |
+| `tool_end` | `tool`, `tool_use_id`, `duration_ms`, `result_status`, `error`, `error_type`, `error_msg` |
+| `agent_end` | `duration_ms`, `stop_reason`, `cycle_count`, `input_tokens`, `output_tokens`, `total_tokens`, `tool_calls` |
+
+### Querying a single invocation
+
+CloudWatch Logs Insights against `/ai-platform/<agent>/app-<env>`:
+
+```
+fields @timestamp, event, tool, duration_ms, input_tokens, output_tokens
+| filter session_id = '<session-id>'
+| filter event in ['agent_start','tool_start','tool_end','agent_end']
+| sort @timestamp asc
+```
+
+`session_id` is the durable correlation ID today. The JSON `trace_id`
+field is populated only when the orchestrator dispatches with a
+`trace_context` body — direct invocations get `"-"`. A future change
+will read `trace.get_current_span().get_span_context().trace_id` so
+the JSON `trace_id` matches the OTEL trace_id from AgentCore's native
+instrumentation; until then, filter on `session_id`.
+
+### Verification
+
+After deploying a Strands agent with hooks wired, an invocation that
+calls one tool produces four hook events (`agent_start`, `tool_start`,
+`tool_end`, `agent_end`); two tools produces six. `trace_hook_error`
+events should be absent — their presence indicates the callback
+captured an exception that needs investigation.
 
 ---
 
@@ -257,25 +369,21 @@ scaffold skill files inline into an agent layer as a workaround.
 
 ## Teardown
 
-Each agent layer teardown is standalone:
+Each agent layer teardown is standalone and preserves the ECR repo and
+its images:
 
 ```bash
-# 1. Purge ECR images (required — repo destruction fails on non-empty repo)
-aws ecr list-images --region <region> \
-  --repository-name ai-platform-<env>-<name> \
-  --query 'imageIds[*]' --output json | \
-  aws ecr batch-delete-image --region <region> \
-    --repository-name ai-platform-<env>-<name> \
-    --image-ids file:///dev/stdin
-
-# 2. Destroy the layer
 cd terraform/<env>/agents/<name>
 terraform destroy -auto-approve
 ```
 
 The `when = destroy` provisioner on the manifest resource removes the
-registry entry automatically.
+registry entry automatically. The ECR repo and its images are owned by
+the `ecr/` layer and survive this destroy — the next apply picks up
+the existing images without rebuild.
 
 Teardown ordering across the tree follows the operations runbook's destroy
 sequence: orchestrator → sub-agents → tools → platform → foundation.
+The `ecr/` layer is destroyed only when decommissioning the environment
+entirely (after foundation, per the runbook).
 See [../../operations.md](../../operations.md#teardown-order).
